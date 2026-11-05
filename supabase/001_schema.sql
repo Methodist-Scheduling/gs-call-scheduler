@@ -126,3 +126,8 @@ do $$ begin
   begin alter publication supabase_realtime add table public.months; exception when duplicate_object then null; end;
   begin alter publication supabase_realtime add table public.settings; exception when duplicate_object then null; end;
 end $$;
+
+-- Newer Supabase projects don't auto-grant table access to service_role (used by the edge functions). Without this, login can't find usernames.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to service_role;
