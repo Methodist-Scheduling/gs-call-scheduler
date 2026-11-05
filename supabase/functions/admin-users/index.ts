@@ -26,11 +26,12 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === 'create') {
-      const username = String(body.username || '').toLowerCase().trim();
-      if (!/^[a-z0-9._-]{3,32}$/.test(username)) return json({ error: 'Username: 3–32 lowercase letters, numbers, dot, dash or underscore.' }, 400);
+      // username is optional: if blank, the person picks their own from the invite link
+      const username = String(body.username || '').toLowerCase().trim() || null;
+      if (username && !/^[a-z0-9._-]{3,32}$/.test(username)) return json({ error: 'Username: 3–32 lowercase letters, numbers, dot, dash or underscore.' }, 400);
       if (!ROLES.includes(body.role)) return json({ error: 'Pick a role.' }, 400);
-      const { data: taken } = await admin.from('profiles').select('id').eq('username', username).maybeSingle();
-      if (taken) return json({ error: 'That username is taken.' }, 400);
+      if (username) { const { data: taken } = await admin.from('profiles').select('id').eq('username', username).maybeSingle();
+      if (taken) return json({ error: 'That username is taken.' }, 400); }
       let userId: string, link: string | null = null;
       if (body.send_email) {
         const { data, error } = await admin.auth.admin.inviteUserByEmail(body.email, { redirectTo: site });
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
       }
       const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin });
       if (pe) return json({ error: pe.message }, 400);
-      await log(`added ${username} as ${body.role}${body.is_admin ? ' (admin)' : ''}`);
+      await log(`added ${username || String(body.display_name).trim()} as ${body.role}${body.is_admin ? ' (admin)' : ''}`);
       return json({ ok: true, link });
     }
 

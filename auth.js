@@ -34,19 +34,27 @@
     };
   }
 
-  function showSetPassword(isInvite) {
-    card(`<p>${isInvite ? 'Welcome. Pick a password to finish setting up your account.' : 'Pick a new password.'}</p>
+  async function showSetPassword(isInvite, onlyUsername) {
+    const { data: { user } } = await sb.auth.getUser();
+    const { data: prof } = user ? await sb.from('profiles').select('username').eq('id', user.id).maybeSingle() : { data: null };
+    const needUser = prof && !prof.username;
+    card(`<p>${onlyUsername ? 'Pick a username to finish setting up your account.' : isInvite ? 'Welcome. Pick a username and password to finish setting up your account.' : 'Pick a new password.'}</p>
       <form id="pwForm" style="display:grid;gap:12px">
+        ${needUser ? '<label>Username (what you’ll sign in with: 3–32 lowercase letters, numbers, dot, dash or underscore)<input id="pu" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>' : ''}
+        ${onlyUsername ? '' : `
         <label>New password (10+ characters)<input id="p1" type="password" autocomplete="new-password" minlength="10" required></label>
-        <label>Type it again<input id="p2" type="password" autocomplete="new-password" minlength="10" required></label>
+        <label>Type it again<input id="p2" type="password" autocomplete="new-password" minlength="10" required></label>`}
         <div class="err" id="perr"></div>
-        <button class="btn primary" type="submit">Save password</button>
+        <button class="btn primary" type="submit">Save</button>
       </form>`);
     document.getElementById('pwForm').onsubmit = async e => {
-      e.preventDefault(); const a = document.getElementById('p1').value, b = document.getElementById('p2').value, err = document.getElementById('perr');
-      if (a !== b) { err.textContent = 'The two passwords don’t match.'; return; }
-      const { error } = await sb.auth.updateUser({ password: a });
-      if (error) { err.textContent = error.message; return; }
+      e.preventDefault(); const err = document.getElementById('perr'); err.textContent = '';
+      if (!onlyUsername) { const a = document.getElementById('p1').value, b = document.getElementById('p2').value;
+        if (a !== b) { err.textContent = 'The two passwords don’t match.'; return; } }
+      if (needUser) { const { data: msg, error: ue } = await sb.rpc('claim_username', { u: document.getElementById('pu').value });
+        if (ue || msg !== 'ok') { err.textContent = (ue && ue.message) || msg; return; } }
+      if (!onlyUsername) { const { error } = await sb.auth.updateUser({ password: document.getElementById('p1').value });
+        if (error) { err.textContent = error.message; return; } }
       history.replaceState(null, '', location.pathname + '#schedule'); boot();
     };
   }
@@ -83,6 +91,7 @@
     if (!user) return showLogin();
     const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
     if (!profile) { card('<p>Your login works, but your account isn’t set up in the scheduler yet. Ask an admin.</p><button class="btn" id="so">Sign out</button>'); document.getElementById('so').onclick = () => sb.auth.signOut().then(() => location.reload()); return; }
+    if (!profile.username) return showSetPassword(false, true); // invited people pick their own username
     if (!profile.active) { card('<p>This account is turned off. Ask an admin if that’s a mistake.</p><button class="btn" id="so">Sign out</button>'); document.getElementById('so').onclick = () => sb.auth.signOut().then(() => location.reload()); return; }
     const [refQ, setQ, monQ, verQ, logQ] = await Promise.all([
       sb.from('reference').select('key,value'),

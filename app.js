@@ -464,18 +464,17 @@ function viewPeople() {
   if (!S.isAdmin) return '<div class="panel">Only admins manage accounts.</div>';
   if (PEOPLE === null) { loadPeople(); return '<div class="panel">Loading accounts…</div>'; }
   const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief'], ['pd', 'Program director'], ['resident', 'Resident']];
-  return `<div class="row"><h2>People</h2><span class="muted small">Admins add accounts and pick each username. People set their own password from the link they get.</span></div>
+  return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
   <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
-  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td>${esc(p.username)}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
-    <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.username)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
+    <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Admin"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
     <td><button class="btn" data-plink="${p.id}" style="padding:1px 8px">${p.confirmed ? 'Reset link' : 'Setup link'}</button></td></tr>`).join('')}
   </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the person's history. You can't change your own role, admin or active status, so nobody locks themselves out.</p></div>
   <div class="panel"><h3>Add a person</h3><div class="kv small">
     <label for="nName">Full name</label><input id="nName" type="text" placeholder="Jane Doe">
-    <label for="nUser">Username</label><input id="nUser" type="text" placeholder="tsmith (lowercase)">
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="for the password link">
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox"></div>
@@ -490,9 +489,9 @@ function wirePeople() {
   document.querySelectorAll('[data-pactive]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pactive, active: el.checked }, el.checked ? 'Account turned back on.' : 'Account turned off.'); loadPeople(); });
   document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) showLink(d.link); });
   const add = $('#nAdd'); if (add) add.onclick = async () => {
-    const body = { action: 'create', display_name: $('#nName').value.trim(), username: $('#nUser').value.trim().toLowerCase(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
-    if (!body.display_name || !body.username || !body.email) return toast('Name, username and email are all needed.');
-    const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to set their password.' : 'Added. Copy the link below and send it to them.');
+    const body = { action: 'create', display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
+    if (!body.display_name || !body.email) return toast('Name and email are both needed.');
+    const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
     if (d) { PEOPLE = null; render(); if (d.link) setTimeout(() => showLink(d.link), 400); }
   };
 }
