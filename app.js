@@ -9,7 +9,7 @@ const HOLNAMES = { '2026-12': { 23: 'Christmas', 24: 'Christmas', 25: 'Christmas
 const LEVEL = n => { const p = DATA.pgy[n]; return p === 'F' ? 'Fellow' : 'PGY-' + p; };
 const SLOTNAME = { U: 'Upper level', M: 'Mid level', I: 'Intern' };
 const ROTATIONS = [...new Set(Object.values(DATA.rotations).flatMap(m => Object.values(m).map(r => r.rotation)).concat(['Leave']))].sort();
-const RULE_LABEL = { S1: 'S1 every-other-day call', S2: 'S2 protected time', S3: 'S3 colorectal day', S4: 'S4 vacation bookends', S5: 'S5 weekend off', S6: 'S6 requests', F1: 'F1 call targets', F2: 'F2 second weekend off', F3: 'F3 weekend balance (YTD)', F4: 'F4 two-person balance' };
+const RULE_LABEL = { S1: 'S1 every-other-day call', S2: 'S2 protected time', S3: 'S3 colorectal day', S4: 'S4 vacation bookends', S5: 'S5 weekend off', S6: 'S6 requests', S7: 'S7 back-to-back weekends', F1: 'F1 call targets', F2: 'F2 second weekend off', F3: 'F3 weekend balance (YTD)', F4: 'F4 two-person balance' };
 const ym = k => k.split('-').map(Number);
 const ndays = k => { const [y, m] = ym(k); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
 const iso = (k, d) => k + '-' + String(d).padStart(2, '0');
@@ -231,6 +231,7 @@ function softDetail(k, ev) {
   if (k === 'S1') return list((n, s) => s.q2).map(n => `${n} ${st[n].q2}`).join(', ');
   if (k === 'F2') return list((n, s) => s.wTot && s.wOff === 1).join(', ') + ' have only one weekend off';
   if (k === 'S5') return list((n, s) => s.wTot && s.wOff === 0).join(', ') + ' have no weekend off';
+  if (k === 'S7') return list((n, s) => s.b2b > 0).join(', ') + ' work back-to-back weekends (call or rounding)';
   if (k === 'S4') return list((n, s) => s.bookBroken).join(', ') + ': call on a weekend next to vacation';
   if (k === 'S3') return 'GS2 resident on call a Sunday or Monday night';
   if (k === 'S6') return requestMisses().join(', ') || 'none';
@@ -355,7 +356,7 @@ function viewRules() {
   const R = S.rules, t = R.targets, dis = isScheduler() ? '' : 'disabled';
   const tr = (k, label) => `<tr><td>${label}</td><td><input type="number" min="0" max="12" data-t="${k}" data-i="0" value="${t[k][0]}" ${dis} aria-label="${label} minimum"></td><td><input type="number" min="0" max="12" data-t="${k}" data-i="1" value="${t[k][1]}" ${dis} aria-label="${label} maximum"></td></tr>`;
   const p4 = Object.keys(DATA.pgy).filter(n => DATA.pgy[n] === 4);
-  return `<div class="row"><h2>Rules</h2><span class="muted small">Approved rules v1.2 (PD approved Nov 5). Every number here is a setting each year's schedulers can change without rebuilding the app.</span></div>
+  return `<div class="row"><h2>Rules</h2><span class="muted small">Rules v1.3 (v1.1 PD approved Nov 5; v1.3 weekend changes pending PD sign-off). Every number here is a setting each year's schedulers can change without rebuilding the app.</span></div>
   <div class="grid2"><div class="panel"><h3>Call targets per month (F1)</h3>
     <table style="max-width:420px"><thead><tr><th>Group</th><th>Min</th><th>Max</th></tr></thead><tbody>${tr(1, 'Interns')}${tr(2, 'PGY-2')}${tr(3, 'PGY-3')}${tr(4, 'PGY-4')}${tr(5, 'PGY-5')}${tr('F', 'Fellow')}</tbody></table>
     <h3 style="margin-top:16px">Limits</h3><div class="kv"><label for="rCap">Fellow cap (H7)</label><input id="rCap" type="number" min="0" max="10" value="${R.fellowCap}" ${dis}><label for="rQ2">Max calls in a row, every other day (H14)</label><input id="rQ2" type="number" min="1" max="6" value="${R.maxQ2Run}" ${dis}><label for="rHrs">Call length for hour estimates</label><input id="rHrs" type="number" min="12" max="36" value="${R.callHours}" ${dis}></div></div>
@@ -363,7 +364,7 @@ function viewRules() {
     <div class="panel small"><h3>Two-person call exceptions (H3)</h3><p class="muted">Not eligible for two-person call until a PGY-5 chief removes them.</p>
       ${p4.map(n => `<label class="row"><input type="checkbox" data-ntp="${esc(n)}" ${(R.noTwoPerson || []).includes(n) ? 'checked' : ''} ${S.role === 'Chief' ? '' : 'disabled'}> ${esc(n)}</label>`).join('')}</div>
     <div class="panel small"><h3>Open question</h3><label class="row" style="align-items:flex-start;gap:8px"><input type="checkbox" id="rSS" ${R.sameServiceBlocked ? 'checked' : ''} ${dis}><span><b>Two residents on the same service never share a call day.</b> Not in the rules (H15 covers sister services only). Happened 6 times Jul–Nov.</span></label></div>
-    <div class="panel small"><h3>Always on</h3><p class="muted">ACGME limits, H1–H15 (a PGY-4 never fills the mid slot), holiday trios, vacation and leave, excluded rotations (Richardson, Peds, Transplant), Fri/Sat/Sun callers work that weekend's rounding (H9).</p>
+    <div class="panel small"><h3>Always on</h3><p class="muted">ACGME limits, H1–H15 (a PGY-4 never fills the mid slot), holiday trios, vacation and leave, excluded rotations (Richardson, Peds, Transplant), Fri/Sat/Sun callers work that weekend's rounding (H9). Rounding counts as a worked weekend (S5, F2, S7: avoid back-to-back weekends). Fill-in rounders rotate; one resident covers HPB and Transplant, two when feasible (W2).</p>
       <button class="btn primary" id="rulesApply" ${canEdit() ? '' : 'disabled'}>Rebuild with these rules</button></div></div></div>`;
 }
 
