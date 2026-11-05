@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+*.local
+.env*
+# Resident data never goes in this repo: it lives in the database (uploaded once by an admin).
+*setup-bundle*.json
+data/

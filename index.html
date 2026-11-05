@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GS Call Scheduler</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="auth" class="authwrap"><div class="authcard"><h1>GS Call Scheduler</h1><p class="muted">Loading…</p></div></div>
+<div id="shell" hidden>
+<header class="top">
+  <div>
+    <h1>GS Call Scheduler</h1>
+    <div class="sub">General Surgery · rules v1.2</div>
+  </div>
+  <div class="spacer"></div>
+  <label class="who" for="monthSel">Month <select id="monthSel"></select></label>
+  <div class="who"><span id="whoName"></span>
+    <label for="roleSel" class="who" id="previewWrap" hidden>Preview as
+      <select id="roleSel"><option value="Scheduler">Scheduler (PGY-4)</option><option value="Chief">PGY-5 chief</option><option>Program Director</option><option>Resident</option></select>
+    </label>
+    <button class="btn" id="signOut">Sign out</button>
+  </div>
+</header>
+<nav class="tabs" aria-label="Sections">
+  <a href="#schedule">Schedule</a><a href="#inputs">Inputs</a><a href="#dashboard">Dashboard</a><a href="#history">History</a><a href="#notes">Notes for Claude</a><a href="#rules">Rules</a><a href="#approval">Approval</a><a href="#people" id="peopleTab" hidden>People</a>
+</nav>
+<div id="previewNote" class="banner" style="margin:12px 20px 0" hidden>Preview only: you're seeing another role's screens. Changes still follow your real role.</div>
+<main id="main"></main>
+<aside class="drawer" id="drawer" aria-label="Edit call slot"></aside>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="build-input.js"></script>
+<script src="app.js"></script>
+<script src="auth.js"></script>
+</body>
+</html>
