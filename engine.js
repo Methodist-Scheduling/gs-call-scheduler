@@ -89,6 +89,11 @@
     // who works each weekend: callers + rounders (S5, F2, S7 count rounding)
     const RB = roundingBlocks(P, A, input.holidays || []);
     const firstFri = (P.weekends[0] || [])[0];
+    // W3 (hard): the fellow and the ICU resident alternate weekends; on the other's weekend they don't work at all (no call either)
+    days.forEach(x => { if (!isWknd(x.w)) return; const rec = RB[x.d]; if (!rec || !rec.weekend) return; const a = A[x.d - 1];
+      ['I', 'M', 'U'].forEach(s => { const p = a[s] && byName[a[s]]; if (!p) return;
+        if (p.lvl === 'F' && !p.excluded && !rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (fellow) on call on an ICU-resident weekend`, 'hard');
+        if (p.rotation === 'ICU' && p.lvl !== 'F' && rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (ICU resident) on call on the fellow's weekend`, 'hard'); }); });
     const priorWk = firstFri ? new Set(Object.entries(prior).filter(([, ds]) => ds.some(d => d >= firstFri - 7 && d <= firstFri - 5)).map(([n]) => n)) : new Set();
     // per person
     const stats = {};
@@ -270,7 +275,7 @@
       const fw = !!fellow && wkIdx % 2 === fStart && fellowRounds < 2 && !fellow.vacAll.has(lone ? 1 : sat) && !(fellow.leaveDays || []).includes(lone ? 1 : sat);
       if (fw) fellowRounds++;
       const rec = build(days, lone ? 1 : sat, prevWorkers, fw);
-      rec.weekend = true; prevWorkers = rec.workers;
+      rec.weekend = true; rec.fellowWeek = fw; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
     (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = build([d], d, new Set(), false, true); rec.holiday = true; out[d] = rec; });
