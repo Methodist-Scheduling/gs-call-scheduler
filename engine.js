@@ -219,7 +219,7 @@
   // weekend rounding blocks (W1–W5). Fri/Sat/Sun callers work the weekend (H9) and go on blocks first,
   // on their own service when they have one, else as cross-cover. Empty blocks are then filled with
   // one own-service resident, rotating (not someone who worked last weekend, fewest fill-ins first).
-  // W2: one resident covers HPB and Transplant; two when feasible. W3: the SICU fellow rounds ICU two weekends a month (alternating); otherwise call only.
+  // W2: one resident covers HPB and Transplant; two when feasible. W3: the SICU fellow and the ICU resident alternate ICU weekends (fellow two a month); otherwise the fellow only takes call.
   function roundingBlocks(P, A, holidays) {
     const out = {};
     const BLOCK = { 'Trauma/EGS': ['Trauma', 'EGS'], ICU: ['ICU'], GS1: ['GS1'], GS2: ['GS2'], 'Vasc/Thor': ['Vascular', 'Thoracic'], 'HPB/Transplant': ['HPB', 'Transplant'] };
@@ -232,14 +232,17 @@
     const fills = {}; // how often each person was pulled in to round (rotates the fill-in)
     let wkIdx = 0, prevWorkers = new Set(ff ? Object.entries(P.input.prior || {}).filter(([, ds]) => ds.some(d => d >= ff - 7 && d <= ff - 5)).map(([nm]) => nm) : []); // last weekend of the previous month (calls)
     // callDays: days whose callers work this block; refDay: availability check
-    const build = (callDays, refDay, prev, fellowWeek) => {
+    const build = (callDays, refDay, prev, fellowWeek, refHoliday) => {
       const b = {}; Object.keys(BLOCK).forEach(k => b[k] = []);
       const avail = p => !p.vacAll.has(refDay) && !(p.leaveDays || []).includes(refDay) && p.rotation !== 'Leave';
-      // W3: the SICU fellow rounds ICU on two weekends a month (alternating) and otherwise only takes call, never cross-cover
+      // the SICU fellow never cross-covers; she rounds only ICU, only on her weekends
       const all = [...new Set(callDays.map(d => A[d - 1]).filter(Boolean).flatMap(a => [a.I, a.M, a.U]).filter(Boolean))];
       const callers = all.filter(n => !P.byName[n] || P.byName[n].lvl !== 'F');
-      callers.forEach(n => { const p = P.byName[n]; if (!p) return; const k = blockOf(p); if (k) b[k].push(n); });
-      if (fellowWeek) b.ICU.unshift(fellow.name);
+      callers.forEach(n => { const p = P.byName[n]; if (!p) return; const k = blockOf(p); if (k && !(k === 'ICU' && fellowWeek)) b[k].push(n); });
+      // W3: fellow and ICU resident alternate weekends. Fellow weekend: fellow alone on ICU (an ICU resident on call cross-covers elsewhere).
+      // Other weekends: the ICU resident(s) always round ICU.
+      if (fellowWeek) b.ICU = [fellow.name];
+      else if (!refHoliday) P.people.filter(p => p.rotation === 'ICU' && p.lvl !== 'F' && avail(p) && !b.ICU.includes(p.name)).forEach(p => b.ICU.push(p.name));
       // fill-in pick: someone on the service who didn't work last weekend, fewest fill-ins so far
       const pick = rots => P.people.filter(p => rots.includes(p.rotation) && avail(p) && p.lvl !== 'F' && !callers.includes(p.name))
         .sort((x, y) => (prev.has(x.name) - prev.has(y.name)) || ((fills[x.name] || 0) - (fills[y.name] || 0)) || (x.name < y.name ? -1 : 1))[0];
@@ -270,7 +273,7 @@
       rec.weekend = true; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
-    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = build([d], d, new Set(), false); rec.holiday = true; out[d] = rec; });
+    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = build([d], d, new Set(), false, true); rec.holiday = true; out[d] = rec; });
     return out;
   }
 
