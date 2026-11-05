@@ -160,6 +160,13 @@ const dayType = (k, d) => { const [y, m] = ym(k); const w = E.dow(y, m, d); retu
 function deadline(k) { const [y, m] = ym(k); const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1; const dl = new Date(py, pm - 1, 15); const days = Math.ceil((dl - new Date(new Date().toDateString())) / 864e5); return { label: `${MONTHS[pm - 1]} 15`, days }; }
 
 // ---------- calendar ----------
+const RABBR = { 'Trauma/EGS': 'T/EGS', ICU: 'ICU', GS1: 'GS1', GS2: 'GS2', 'Vasc/Thor': 'V/T', 'HPB/Transplant': 'HPB/Tx' };
+// Same rule as the PDF: rounding prints on Sat, Sun and holiday cells.
+function roundLines(rb, k, d) {
+  const [y, m] = ym(k), w = E.dow(y, m, d), rec = rb && rb[d];
+  if (!rec || !(w === 6 || w === 0 || rec.holiday || (HOLNAMES[k] || {})[d])) return null;
+  return Object.entries(rec.blocks).map(([b, v]) => `${RABBR[b] || b}: ${v.map(n => n.replace(' (cross-cover)', '*')).join('/') || '-'}`);
+}
 function calendarHTML(A, k, o) {
   const [y, m] = ym(k), first = E.dow(y, m, 1); let h = DOW.map(d => `<div class="hd">${d}</div>`).join('');
   for (let i = 0; i < first; i++) h += '<div class="day blank"></div>';
@@ -170,7 +177,9 @@ function calendarHTML(A, k, o) {
       if (!n) return `<button class="chip empty" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'}>${s === 'M' ? 'two-person call' : 'no ' + SLOTNAME[s].toLowerCase()}</button>`;
       return `<button class="chip ${s} ${est ? 'est' : ''}" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}">${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
     }).join('');
-    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}</div>`;
+    const rl = o.rb ? roundLines(o.rb, k, d) : null;
+    const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
+    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
   });
   return `<div class="cal">${h}</div>`;
 }
@@ -201,10 +210,10 @@ function viewSchedule() {
   ${!isScheduler() ? `<div class="banner">${S.role === 'Chief' ? 'PGY-5 chief' : S.role === 'Program Director' ? 'PD' : 'Resident'} view. The PGY-4 schedulers build this.${canSwap() ? ' You can approve like-for-like swaps: click a name.' : ''}${S.role === 'Chief' ? ' Enter your own call picks on the Inputs tab.' : ''}</div>` : ''}
   <div class="grid2">
     <div class="panel" style="padding:10px">
-      <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span><span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span></div>
-      ${calendarHTML(st.A, k, { click: canEdit() || canSwap(), locked, est, tags: d => (HOLNAMES[k] || {})[d] || '' })}
+      <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span><span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span><span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
+      ${calendarHTML(st.A, k, { click: canEdit() || canSwap(), locked, est, rb, tags: d => (HOLNAMES[k] || {})[d] || '' })}
       <h3 style="margin:16px 6px 6px">Weekend and holiday rounding blocks</h3>
-      <p class="small muted" style="margin:0 6px 8px">Fri, Sat and Sun callers work that weekend (H9) and round first; on a weekday holiday, that day's callers round. Empty blocks get one resident from the service. * = cross-cover. Printed on Sat, Sun and holiday cells of the PDF.</p>
+      <p class="small muted" style="margin:0 6px 8px">Fri, Sat and Sun callers work that weekend (H9) and round first; on a weekday holiday, that day's callers round. Empty blocks get one resident from the service. * = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
       <div class="tablewrap"><table><thead><tr><th>Days</th>${BL.map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>${recs.map(x => `<tr><td>${recLabel(x)}</td>${BL.map(b => `<td>${esc((x.r.blocks[b] || []).join(', ').replace(/ \(cross-cover\)/g, '*'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
     </div>
     <div style="display:grid;gap:14px">
@@ -391,11 +400,9 @@ async function downloadPDF() {
       const a = st.A[d - 1]; doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(d), x + 4, yy + 12);
       const hn = (HOLNAMES[k] || {})[d]; if (hn) { doc.setFontSize(7); doc.setTextColor(160, 25, 79); doc.text(hn.toUpperCase(), x + cw - 4, yy + 11, { align: 'right' }); doc.setTextColor(0); }
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-      const w = E.dow(y, m, d), rec = rb[d], showR = rec && (w === 6 || w === 0 || rec.holiday || (HOLNAMES[k] || {})[d]);
+      const lines = roundLines(rb, k, d), showR = !!lines;
       const nameGap = showR ? 10.5 : 12; [a.U, a.M || '(two-person)', a.I].forEach((n, i) => doc.text(String(n || ''), x + 6, yy + 25 + i * nameGap));
       if (showR) {
-        const ABBR = { 'Trauma/EGS': 'T/EGS', ICU: 'ICU', GS1: 'GS1', GS2: 'GS2', 'Vasc/Thor': 'V/T', 'HPB/Transplant': 'HPB/Tx' };
-        const lines = Object.entries(rec.blocks).map(([b, v]) => `${ABBR[b]}: ${v.map(n => n.replace(' (cross-cover)', '*')).join('/') || '-'}`);
         const top0 = yy + 25 + 3 * nameGap, lh = Math.min(6.6, (yy + ch - 3 - top0) / lines.length);
         doc.setFontSize(Math.max(4.6, lh * 0.88)); doc.setTextColor(70);
         lines.forEach((t, i) => doc.text(doc.splitTextToSize(t, cw - 10)[0], x + 6, top0 + i * lh));
