@@ -256,7 +256,7 @@
           const f = pool >= 4 ? pick([other]) : null; if (f && !prev.has(f.name)) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; }
         }
       });
-      callers.forEach(n => { if (Object.values(b).some(v => v.includes(n))) return; const k = Object.keys(b).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
+      callers.forEach(n => { if (Object.values(b).some(v => v.includes(n))) return; const k = Object.keys(b).filter(x => !(fellowWeek && x === 'ICU')).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
       // still empty and no caller to cross-cover: pull someone in even if they worked last weekend
       Object.keys(BLOCK).forEach(k => { if (!b[k].length) { const f = pick(BLOCK[k]); if (f) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } } });
       const workers = new Set(all.concat(...Object.values(b).map(v => v.map(n => n.replace(' (cross-cover)', '')))));
