@@ -204,9 +204,11 @@ function roundLines(rb, k, d) {
   if (!rec || !(w === 6 || w === 0 || rec.holiday || (HOLNAMES[k] || {})[d])) return null;
   return Object.entries(rec.blocks).map(([b, v]) => `${RABBR[b] || b}: ${v.map(n => n.replace(' (cross-cover)', '*')).join('/') || '-'}`);
 }
+// "My calls only": just the days you're on call or rounding (remembered on this device)
+let MINE = false; try { MINE = localStorage.getItem('gs-mine') === '1'; } catch (e) {}
 function calendarHTML(A, k, o) {
-  const [y, m] = ym(k), first = E.dow(y, m, 1); let h = DOW.map(d => `<div class="hd">${d}</div>`).join('');
-  for (let i = 0; i < first; i++) h += '<div class="day blank"></div>';
+  const [y, m] = ym(k), first = E.dow(y, m, 1); let h = o.mine ? '' : DOW.map(d => `<div class="hd">${d}</div>`).join('');
+  if (!o.mine) for (let i = 0; i < first; i++) h += '<div class="day blank"></div>';
   A.forEach((a, i) => {
     const d = i + 1, w = E.dow(y, m, d), wk = w === 0 || w === 6 || w === 5;
     const chips = ['U', 'M', 'I'].map(s => {
@@ -216,10 +218,12 @@ function calendarHTML(A, k, o) {
       return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
+    if (o.mine && ![a.U, a.M, a.I].includes(o.mine) && !(rl && rl.some(t => new RegExp('\\b' + o.mine + '\\b').test(t)))) return;
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
     h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num"><span class="wd">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][E.dow(...ym(k), d)]} </span>${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
   });
-  return `<div class="cal">${h}</div>`;
+  if (o.mine && !h) return `<div class="panel small">You're not on call or rounding in ${esc(monthName(k))}.</div>`;
+  return `<div class="cal ${o.mine ? 'list' : ''}">${h}</div>`;
 }
 
 // ---------- views ----------
@@ -291,7 +295,8 @@ function viewSchedule() {
   <div class="grid2">
     <div class="panel" style="padding:10px">
       <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span>${adminView() ? '<span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span>' : ''}<span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
-      ${calendarHTML(st.A, k, { click: adminView() && (canEdit() || canSwap()), own: !adminView() && st.status === 'Published' ? MY_NAME : null, locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
+      ${MY_NAME ? `<label class="mineToggle" style="margin:0 6px 8px"><input type="checkbox" id="mineT" ${MINE ? 'checked' : ''}> My calls only${MINE ? ` <span class="muted">· ${st.A.filter(a => [a.U, a.M, a.I].includes(MY_NAME)).length} calls</span>` : ''}</label>` : ''}
+      ${calendarHTML(st.A, k, { mine: MINE && MY_NAME ? MY_NAME : null, click: adminView() && (canEdit() || canSwap()), own: !adminView() && st.status === 'Published' ? MY_NAME : null, locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
       <h3 style="margin:16px 6px 6px">Weekend and holiday rounding</h3>
       <p class="small muted" style="margin:0 6px 8px">${canEdit() ? 'The app fills these in (W1–W6). Click ✕ to take someone off a team or “+” to add someone. Your edits stay through rebuilds; red means the edit breaks a rule. ' : ''}* = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
       ${roundingTable(recs, recLabel, BL, k)}
@@ -863,6 +868,7 @@ function wire() {
   const st = cur(), k = S.month;
   wirePeople();
   const on = (sel, f) => { const el = $(sel); if (el) el.onclick = f; };
+  const mt = $('#mineT'); if (mt) mt.onchange = () => { MINE = mt.checked; try { localStorage.setItem('gs-mine', MINE ? '1' : '0'); } catch (e) {} render(); };
   document.querySelectorAll('[data-jump]').forEach(el => el.onclick = e => { e.preventDefault(); const t = document.getElementById(el.dataset.jump); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   document.querySelectorAll('[data-rc]').forEach(el => el.onclick = () => showRuleCheck(el.dataset.rc));
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });

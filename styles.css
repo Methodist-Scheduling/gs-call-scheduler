@@ -103,7 +103,7 @@ input[type="number"] { width: 64px; }
 .step b { display: block; font-family: var(--display); }
 @media (max-width: 640px) { .stepper { grid-template-columns: 1fr 1fr; } }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
-.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 13px; display: none; z-index: 30; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); max-width: min(560px, calc(100vw - 24px)); background: var(--ink); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 13px; display: none; z-index: 30; }
 .toast.show { display: block; }
 .banner { padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); color: var(--ink); border: 1px solid var(--warn); font-size: 13px; }
 [hidden] { display: none !important; }
@@ -202,7 +202,18 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
   .modal { width: 100%; max-height: 90vh; overflow-y: auto; border-radius: 14px 14px 10px 10px; }
   .mc-d { min-height: 38px; font-size: 11px; padding: 2px 3px; }
   .mc-d.call i { font-size: 9px; }
-  #toast { left: 10px; right: 10px; bottom: 10px; max-width: none; }
+  #toast { left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); transform: none; max-width: none; text-align: center; font-size: 14px; padding: 12px 14px; line-height: 1.35; word-wrap: break-word; }
   .tiles { grid-template-columns: 1fr 1fr !important; }
   .rtable td { min-width: 110px; }
 }
+
+/* theme switch + my calls only */
+.themebtn { min-width: 38px; padding: 4px 8px; }
+.cal.list { grid-template-columns: 1fr !important; }
+.cal.list .hd, .cal.list .day.blank { display: none; }
+.cal.list .wd { display: inline; font-weight: 500; color: var(--muted); }
+.cal.list .day { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px 12px; }
+.cal.list .dn { width: 100%; }
+.cal.list .chip { flex: 0 1 220px; }
+.cal.list .day .rnd { width: 100%; }
+.mineToggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }

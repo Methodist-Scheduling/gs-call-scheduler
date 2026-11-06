@@ -1,4 +1,9 @@
 // Sign-in, set-password, first-time setup, then hands off to app.js (window.startScheduler).
+// Theme: Auto (follows the phone/computer setting) → Light → Dark
+(function () { const b = document.getElementById('themeBtn'); if (!b) return; const order = ['auto', 'light', 'dark'], icon = { auto: '◐ Auto', light: '☀️ Light', dark: '🌙 Dark' };
+  const get = () => { try { return localStorage.getItem('gs-theme') || 'auto'; } catch (e) { return 'auto'; } };
+  const apply = t => { if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; b.textContent = icon[t]; b.title = 'Theme: ' + icon[t].split(' ')[1] + ' (tap to change)'; };
+  apply(get()); b.onclick = () => { const t = order[(order.indexOf(get()) + 1) % 3]; try { localStorage.setItem('gs-theme', t); } catch (e) {} apply(t); }; })();
 (async () => {
   const cfg = window.GS_CONFIG;
   const params = new URLSearchParams(location.hash.slice(1));
