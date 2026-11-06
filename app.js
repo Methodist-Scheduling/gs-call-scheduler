@@ -723,9 +723,30 @@ function openDrawer(d, s) {
       if (!why && s === 'U' && p.lvl === 3 && k < '2027-01') why = 'PGY-3 upper call starts Jan (H6)';
       return { p, why, n: CUR.ev.stats[p.name] ? CUR.ev.stats[p.name].n : 0 };
     }).sort((x, y) => (!!x.why - !!y.why) || x.n - y.n);
+    // reason someone can't take a given slot on this day (used by the two-person picker); '' = fine
+    const whyOn = (p, slot) => { if (p.excluded) return p.rotation === 'Leave' ? 'on leave' : `on ${p.rotation} (not in pool)`; if (p.out.has(d)) return 'vacation, leave or unavailable';
+      const other = slot === 'U' ? a.I : a.U; if (p.name === other) return 'already on this day';
+      const near = [d - 1, d + 1].filter(x => x >= 1 && x <= st.A.length && [st.A[x - 1].U, st.A[x - 1].M, st.A[x - 1].I].includes(p.name)); if (near.length) return `on call ${MONTHS[ym(k)[1] - 1]} ${near[0]} (back-to-back)`;
+      if (slot === 'U' && (S.rules.noTwoPerson || []).includes(p.name)) return 'not eligible for two-person (H3)'; return ''; };
+    CUR.twoPick = () => {
+      const ups = P.people.filter(p => p.lvl === 4).map(p => ({ p, why: whyOn(p, 'U') })).sort((x, y) => (!!x.why - !!y.why) || (x.p.name < y.p.name ? -1 : 1));
+      const ins = P.people.filter(p => p.lvl === 1).map(p => ({ p, why: p.name === a.I ? '' : whyOn(p, 'I') })).sort((x, y) => (y.p.name === a.I) - (x.p.name === a.I) || (!!x.why - !!y.why) || (x.p.name < y.p.name ? -1 : 1));
+      const opt = (c, sel) => `<option value="${esc(c.p.name)}" ${sel ? 'selected' : ''}>${esc(c.p.name)}${c.why ? ' ⛔ ' + esc(c.why) : ''}</option>`;
+      const upDef = DATA.pgy[a.U] === 4 ? a.U : (ups.find(c => !c.why) || ups[0] || {}).p?.name;
+      modal(`<h3>Two-person call · ${dateLabel(k, d)}</h3><p class="small muted">${DATA.pgy[a.U] === 4 ? '' : `${esc(a.U || 'Nobody')} isn't a PGY-4, so pick who works it. `}${fs ? '<b style="color:var(--crit)">Fri/Sat two-person call breaks H4.</b> ' : ''}Both cells get locked so a rebuild keeps them. ⛔ = breaks a rule; you can still pick it and the cell turns red.</p>
+        <label class="small">Upper level (PGY-4)<br><select id="tpU" style="width:100%">${ups.map(c => opt(c, c.p.name === upDef)).join('')}</select></label><br><br>
+        <label class="small">Intern<br><select id="tpI" style="width:100%">${ins.map(c => opt(c, c.p.name === a.I)).join('')}</select></label>
+        <div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="tpGo">Make it two-person</button></div>`, (ov, close) => {
+        ov.querySelector('#tpGo').onclick = () => { const U = ov.querySelector('#tpU').value, I = ov.querySelector('#tpI').value; if (!U || !I) return;
+          const wU = [fs ? 'two-person on Fri/Sat (H4)' : '', (ups.find(c => c.p.name === U) || {}).why].filter(Boolean).join('; '), wI = (ins.find(c => c.p.name === I) || {}).why || '';
+          st.A[d - 1] = Object.assign(st.A[d - 1], { U, M: null, I }); st.flags = st.flags || {};
+          [['U', U, wU], ['M', null, fs ? 'two-person on Fri/Sat (H4)' : ''], ['I', I, wI]].forEach(([sl, v, w]) => { st.locks[d + '|' + sl] = v; if (w) st.flags[d + '|' + sl] = w; else delete st.flags[d + '|' + sl]; });
+          logEvent(k, `Set ${dateLabel(k, d)} to two-person call: ${U} + ${I}`); save(); close(); $('#drawer').classList.remove('open'); render(); toast(`Two-person call: ${U} + ${I}, locked.`); };
+      });
+    };
     const fs = [5, 6].includes(E.dow(...ym(k), d)), nt = (S.rules.noTwoPerson || []).includes(a.U), p4 = DATA.pgy[a.U] === 4;
     replaceHTML = `<h3>Replace</h3><p class="small muted">Names in red break a rule that day. You can still pick them; the cell turns red so it's obvious. The rule check catches anything else.</p><div style="display:grid;gap:6px">${cands.map(c => `<button class="opt ${c.p.name === curN ? 'cur' : ''}" data-pick="${esc(c.p.name)}" data-why="${esc(c.why)}" ${hol ? 'disabled' : ''} style="${c.why ? 'border-color:var(--crit);background:var(--crit-bg)' : ''}"><span>${esc(c.p.name)} <span class="why">${LEVEL(c.p.name)} · ${esc(c.p.rotation)}</span></span><span class="why">${c.why ? esc(c.why) : c.n + ' calls'}</span></button>`).join('')}
-    ${s === 'M' && !hol ? `<button class="opt" data-pick="" ${fs || nt || !p4 ? 'disabled' : ''}><span>Make it two-person call</span><span class="why">${fs ? 'not on Fri/Sat (H4)' : !p4 ? 'needs a PGY-4 upper level' : nt ? a.U + ' not eligible (H3)' : 'PGY-4 + intern'}</span></button>` : ''}</div>
+    ${s === 'M' && !hol ? `<button class="opt" ${p4 && !nt && !fs ? 'data-pick=""' : 'data-two="1"'} style="${fs ? 'border-color:var(--crit);background:var(--crit-bg)' : ''}"><span>Make it two-person call</span><span class="why">${fs ? 'breaks H4 (Fri/Sat), pick who works it' : !p4 ? 'no PGY-4 on, pick who works it' : nt ? a.U + ' not eligible (H3), pick who works it' : 'PGY-4 + intern'}</span></button>` : ''}</div>
     <label class="row small"><input type="checkbox" id="dLock" ${st.locks[d + '|' + s] !== undefined ? 'checked' : ''} ${hol ? 'disabled' : ''}> Lock this cell so rebuilding keeps it</label>`;
   }
   let swapHTML = '';
@@ -743,6 +764,7 @@ function openDrawer(d, s) {
   $('#drawer').classList.add('open');
   $('#dClose').onclick = () => $('#drawer').classList.remove('open');
   $('#drawer').querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { const v = b.dataset.pick || null; st.A[d - 1][s] = v; st.locks[d + '|' + s] = v; st.flags = st.flags || {}; if (b.dataset.why) st.flags[d + '|' + s] = b.dataset.why; else delete st.flags[d + '|' + s]; logEvent(k, `Set ${dateLabel(k, d)} ${SLOTNAME[s].toLowerCase()} to ${v || 'two-person call'}`); save(); $('#drawer').classList.remove('open'); render(); });
+  $('#drawer').querySelectorAll('[data-two]').forEach(b => b.onclick = () => CUR.twoPick());
   $('#drawer').querySelectorAll('[data-swap]').forEach(b => b.onclick = () => { const d2 = +b.dataset.swap, other = st.A[d2 - 1][s]; st.A[d2 - 1][s] = curN; st.A[d - 1][s] = other; if (st.flags) { delete st.flags[d + '|' + s]; delete st.flags[d2 + '|' + s]; } st.locks[d + '|' + s] = other; st.locks[d2 + '|' + s] = curN; logEvent(k, `Swap approved: ${curN} ${dateLabel(k, d)} ⇄ ${other} ${dateLabel(k, d2)}`); if (st.status === 'Published') saveVersion('Revised (swap)'); save(); $('#drawer').classList.remove('open'); render(); toast('Swap done and logged.'); });
   const lk = $('#dLock'); if (lk) lk.onchange = e => { if (e.target.checked) st.locks[d + '|' + s] = st.A[d - 1][s]; else delete st.locks[d + '|' + s]; save(); render(); };
 }
