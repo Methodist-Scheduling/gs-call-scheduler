@@ -2,7 +2,7 @@
 /* Layout idea: a duty-board. Slim header, tab strip, a calendar that reads like the printed call PDF, with levels colour-coded. */
 :root {
   --bg: #f3f5f7; --panel: #ffffff; --ink: #142130; --muted: #5a6778; --line: #dbe1e8; --accent: #1d5c8a; --accent-ink: #ffffff;
-  --lv-u: #4a3aa8; --lv-m: #0e6f69; --lv-i: #9a5a12; --soft-u: #ece9fb; --soft-m: #e2f3f1; --soft-i: #fbefdf;
+  --lv-u: #1565d8; --lv-m: #e68a00; --lv-i: #d14f9c; --soft-u: #e3eefc; --soft-m: #fff1dc; --soft-i: #fce6f2;
   --good: #1f7a3d; --warn: #b4530a; --crit: #b42318; --good-bg: #e6f4ea; --warn-bg: #fdf0e1; --crit-bg: #fdeceb;
   --hol: #a3194f; --wk: #eef1f5;
   --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif; --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -10,11 +10,11 @@
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0f151c; --panel: #17202a; --ink: #e6ecf2; --muted: #9aa8b8; --line: #2a3644; --accent: #6fb1e3; --accent-ink: #0b1620;
-  --lv-u: #b4a8ff; --lv-m: #6fd3c8; --lv-i: #f0b467; --soft-u: #262246; --soft-m: #12312f; --soft-i: #3a2a14;
+  --lv-u: #6ea8ff; --lv-m: #ffb340; --lv-i: #f28cc4; --soft-u: #13243f; --soft-m: #3a2a0e; --soft-i: #3a1a2d;
   --good: #6fcf8e; --warn: #f0a35e; --crit: #ff8a80; --good-bg: #15301f; --warn-bg: #3a2814; --crit-bg: #3d1a18; --hol: #ff7aa8; --wk: #1b2531; color-scheme: dark; } }
 :root[data-theme="dark"] {
   --bg: #0f151c; --panel: #17202a; --ink: #e6ecf2; --muted: #9aa8b8; --line: #2a3644; --accent: #6fb1e3; --accent-ink: #0b1620;
-  --lv-u: #b4a8ff; --lv-m: #6fd3c8; --lv-i: #f0b467; --soft-u: #262246; --soft-m: #12312f; --soft-i: #3a2a14;
+  --lv-u: #6ea8ff; --lv-m: #ffb340; --lv-i: #f28cc4; --soft-u: #13243f; --soft-m: #3a2a0e; --soft-i: #3a1a2d;
   --good: #6fcf8e; --warn: #f0a35e; --crit: #ff8a80; --good-bg: #15301f; --warn-bg: #3a2814; --crit-bg: #3d1a18; --hol: #ff7aa8; --wk: #1b2531; color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--body); }
