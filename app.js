@@ -151,6 +151,7 @@ if (['scheduler', 'chief'].includes(S.realRole) && !existing.has('2026-12') && S
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3400); }
+const adminView = () => S.isAdmin && S.role !== 'Resident'; // schedulers, chiefs and the PD are admins; 'Preview as Resident' hides admin screens
 const isScheduler = () => S.role === 'Scheduler' || S.role === 'Chief'; // chiefs can do everything the PGY-4 schedulers do
 const canEdit = () => isScheduler() && !['Published', 'PD review'].includes(cur().status);
 const canSwap = () => S.role === 'Scheduler' || S.role === 'Chief';
@@ -260,7 +261,7 @@ function viewInputs() {
   <p class="small muted">Vacation days are that month's dates (Mon–Fri block calls; weekends next to it are protected by S4). Leave dates carry across months. Unconfirmed leave dates show ⚠ on every call they affect. Call picks lock that person into the upper slot on those days.</p>
   <div class="row"><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div></div>`;
 }
-function order(n) { const p = DATA.pgy[n]; return p === 'F' ? 6 : 6 - p; }
+function order(n) { const p = DATA.pgy[n]; return p === 'F' ? -1 : 6 - p; } // fellow first, then PGY-5 down to interns
 
 function viewDashboard() {
   const st = cur(); if (!st.A) return noDraft();
@@ -272,7 +273,7 @@ function viewDashboard() {
   const minW = Math.min(...ppl.map(p => S2[p.name].wOff));
   const upperAsk = ppl.filter(p => [4, 5, 'F'].includes(p.lvl)).reduce((a, p) => a + p.tmin, 0);
   const midCap = ppl.filter(p => p.lvl === 2 || p.lvl === 3).reduce((a, p) => a + p.tmax, 0);
-  const improve = improvements(ev, P, ppl);
+  const improve = improvements(ev, P, ppl); IMPROVE = improve;
   return `<div class="row"><h2>${monthName(S.month)} dashboard</h2><span class="muted small">Live from the current draft. Year to date = Jul–Nov actual + any earlier drafts + this month.</span></div>
   <div class="tiles">
     <div class="tile ${hard ? 'crit' : 'good'}"><div class="v">${hard}</div><div class="l">Hard-rule breaks</div></div>
@@ -286,37 +287,61 @@ function viewDashboard() {
     return `<tr><td>${esc(p.name)}</td><td>${LEVEL(p.name)}</td><td>${esc(p.rotation)}</td><td><div class="bar" aria-label="${s.n} calls, target ${lo}-${hi}"><div class="band" style="left:${lo / mx * 100}%;width:${Math.max(6, (hi - lo) / mx * 100)}%"></div><div class="dot" style="left:${Math.min(100, s.n / mx * 100)}%;background:${off ? 'var(--warn)' : 'var(--ink)'}"></div></div></td>
     <td class="n">${s.n}</td><td class="n">${s.n - s.fri - s.sat - s.sun}</td><td class="n">${s.fri}</td><td class="n">${s.sat}</td><td class="n">${s.sun}</td><td class="n">${s.hol}</td><td class="n">${s.wOff}/${s.wTot}</td><td class="n">${s.q2 || ''}</td><td class="n">${(p.ytd.calls || 0) + s.n}</td><td class="n">${(p.ytd.wk || 0) + s.wk}</td><td class="n">${s.n * S.rules.callHours}</td></tr>`; }).join('')}
   </tbody></table></div><p class="small muted">Call hours use the call-length setting (${S.rules.callHours} h, Rules tab). The 80-hour check needs rotation hours, which aren’t in the data yet.</p></div>
-  <div style="display:grid;gap:14px"><div class="panel"><h3>Areas for improvement</h3><ul class="issues">${improve.length ? improve.map(t => `<li class="soft">${esc(t)}</li>`).join('') : '<li class="ok">Nothing stands out this month.</li>'}</ul></div>
+  <div style="display:grid;gap:14px"><div class="panel"><h3>Areas for improvement</h3>${improve.some(x => x.name) ? '<p class="small muted">Click one to see the dates on a calendar.</p>' : ''}<ul class="issues">${improve.length ? improve.map((x, i) => x.name ? `<li class="soft"><button class="linkish" data-imp="${i}">${esc(x.t)}</button></li>` : `<li class="soft">${esc(x.t)}</li>`).join('') : '<li class="ok">Nothing stands out this month.</li>'}</ul></div>
   <div class="panel small"><h3>Do the targets fit the slots?</h3><div class="kv"><span>Upper-level slots</span><b class="num">${st.A.length}</b><span>Upper-level minimum targets</span><b class="num">${upperAsk}</b><span>Mid-level slots</span><b class="num">${st.A.length - two}</b><span>Mid-level maximum targets</span><b class="num">${midCap}</b></div>
   <p class="muted">${upperAsk > st.A.length ? `Targets ask for ${upperAsk - st.A.length} more upper-level calls than there are slots, so some upper levels land under target. ` : ''}${midCap < st.A.length ? `Mids can cover ${midCap} of ${st.A.length} days. A PGY-4 never fills the mid slot (H2), so the rest go to two-person call or a mid over target. ` : ''}</p></div></div></div>`;
 }
 function improvements(ev, P, ppl) {
-  const st = ev.stats, out = [];
-  ppl.forEach(p => { const s = st[p.name]; if (s.n < p.tmin) out.push(`${p.name}: ${p.tmin - s.n} under target (${s.n} of ${p.tmin}${p.tmax > p.tmin ? '–' + p.tmax : ''}).`); if (s.n > p.tmax) out.push(`${p.name}: ${s.n - p.tmax} over target.`); if (s.q2 >= 2) out.push(`${p.name}: ${s.q2} every-other-day calls.`); if (s.wTot && s.wOff < 2) out.push(`${p.name}: only ${s.wOff} weekend off.`); if (s.bookBroken) out.push(`${p.name}: call on a weekend next to vacation.`); });
+  const st = ev.stats, out = [], k = S.month, rb = E.roundingBlocks(P, cur().A, B.HOLIDAYS[k] || []);
+  const wkDays = P.weekends.map(g => g.filter(d => d <= P.nd)).filter(g => g.length === 3);
+  const worked = n => wkDays.filter(g => g.some(d => st[n].calls.includes(d)) || (rb[g[1]] && rb[g[1]].workers && rb[g[1]].workers.has(n)));
+  ppl.forEach(p => { const s = st[p.name], n = p.name, base = { name: n, calls: s.calls, vac: [...p.vacAll] };
+    if (s.n < p.tmin) out.push({ ...base, t: `${n}: ${p.tmin - s.n} under target (${s.n} of ${p.tmin}${p.tmax > p.tmin ? '–' + p.tmax : ''}).`, flag: [], note: 'Their calls this month.' });
+    if (s.n > p.tmax) out.push({ ...base, t: `${n}: ${s.n - p.tmax} over target.`, flag: [], note: 'Their calls this month.' });
+    if (s.q2 >= 2) out.push({ ...base, t: `${n}: ${s.q2} every-other-day calls.`, flag: s.calls.filter(d => s.calls.includes(d + 2) || s.calls.includes(d - 2)), note: 'Red = call two days after (or before) another call.' });
+    if (s.wTot && s.wOff < 2) out.push({ ...base, t: `${n}: only ${s.wOff} weekend off.`, flag: worked(n).flat(), note: 'Red = weekends they work (call or rounding).' });
+    if (s.b2b) { const w = worked(n); out.push({ ...base, t: `${n}: ${s.b2b} back-to-back working weekend${s.b2b > 1 ? 's' : ''}.`, flag: w.filter((g, i) => (w[i - 1] && w[i - 1][0] === g[0] - 7) || (w[i + 1] && w[i + 1][0] === g[0] + 7)).flat(), note: 'Red = back-to-back weekends they work. A first weekend can also follow last month’s final weekend.' }); }
+    if (s.bookBroken) out.push({ ...base, t: `${n}: call on a weekend next to vacation.`, flag: s.calls.filter(d => { const w = P.days[d - 1].w; return (w === 0 || w >= 5) && [...p.vacAll].some(v => Math.abs(v - d) <= 3); }), note: 'Red = weekend call next to their vacation (grey).' }); });
   const groups = { Interns: ppl.filter(p => p.lvl === 1), 'Mid levels': ppl.filter(p => p.lvl === 2 || p.lvl === 3), 'PGY-5s': ppl.filter(p => p.lvl === 5) };
-  Object.entries(groups).forEach(([g, ps]) => { if (ps.length < 2) return; const v = ps.map(p => ({ n: p.name, w: (p.ytd.wk || 0) + st[p.name].wk })).sort((a, b) => b.w - a.w); if (v[0].w - v.at(-1).w >= 4) out.push(`${g}: weekend load year to date runs from ${v.at(-1).w} (${v.at(-1).n}) to ${v[0].w} (${v[0].n}). Next month should favor ${v.at(-1).n}.`); });
-  requestMisses().forEach(r => out.push(`Request missed: ${r}.`));
+  Object.entries(groups).forEach(([g, ps]) => { if (ps.length < 2) return; const v = ps.map(p => ({ n: p.name, w: (p.ytd.wk || 0) + st[p.name].wk })).sort((a, b) => b.w - a.w); if (v[0].w - v.at(-1).w >= 4) out.push({ t: `${g}: weekend load year to date runs from ${v.at(-1).w} (${v.at(-1).n}) to ${v[0].w} (${v[0].n}). Next month should favor ${v.at(-1).n}.` }); });
+  requestMissDetail().forEach(r => { const p = P.byName[r.name]; out.push({ t: `Request missed: ${r.name} ${MONTHS[ym(k)[1] - 1]} ${r.day} (${r.type === 'off' ? 'asked off' : 'wanted call'}).`, name: r.name, calls: st[r.name] ? st[r.name].calls : [], vac: p ? [...p.vacAll] : [], flag: [r.day], note: r.type === 'off' ? 'Red = the day they asked off but are on call.' : 'Red = the day they wanted call.' }); });
   return out;
+}
+function requestMissDetail() { const st = cur(), out = []; st.constraints.forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push({ name: c.name, day: d, type: c.type }); }); }); return out; }
+let IMPROVE = [];
+function showImprove(x) {
+  const k = S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
+  let cells = '<div class="mc-h">S</div><div class="mc-h">M</div><div class="mc-h">T</div><div class="mc-h">W</div><div class="mc-h">T</div><div class="mc-h">F</div><div class="mc-h">S</div>' + '<div></div>'.repeat(first);
+  for (let d = 1; d <= nd; d++) { const w = (first + d - 1) % 7, c = [];
+    if (w === 0 || w === 6) c.push('wk'); if (x.vac.includes(d)) c.push('vac'); if (x.calls.includes(d)) c.push('call'); if (x.flag.includes(d)) c.push('flag');
+    cells += `<div class="mc-d ${c.join(' ')}" title="${hol[d] ? esc(hol[d]) : ''}"><span>${d}</span>${x.calls.includes(d) ? '<i>call</i>' : ''}</div>`; }
+  const ov = document.createElement('div'); ov.className = 'modal-ov';
+  ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(x.t)}"><div class="row"><h3 style="margin:0">${esc(x.t)}</h3><span class="spacer"></span><button class="btn" id="mcClose">Close</button></div>
+    <p class="small muted" style="margin:6px 0 10px">${esc(monthName(k))} · ${esc(x.name)}. ${esc(x.note || '')}</p><div class="minical">${cells}</div>
+    <div class="row small" style="margin-top:10px;gap:14px"><span><span class="sw call"></span>On call</span><span><span class="sw flag"></span>The problem</span><span><span class="sw vac"></span>Vacation</span><span><span class="sw wk"></span>Weekend</span></div></div>`;
+  document.body.appendChild(ov); highlightMe(ov);
+  const close = () => { ov.remove(); document.removeEventListener('keydown', esc_); }; const esc_ = e => { if (e.key === 'Escape') close(); };
+  ov.onclick = e => { if (e.target === ov) close(); }; ov.querySelector('#mcClose').onclick = close; document.addEventListener('keydown', esc_); ov.querySelector('#mcClose').focus();
 }
 
 function viewHistory() {
   const k = S.histMonth, [y, m] = ym(k);
   const actual = B.actualAssign(DATA, k); const bt = BT[m];
-  const A = S.histView === 'engine' && bt ? bt.engineA.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null })) : actual;
+  const A = adminView() && S.histView === 'engine' && bt ? bt.engineA.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null })) : actual;
   const hist = DATA.history[k]; const hol = B.HOLIDAYS[k] || [];
   const tags = d => { const x = hist[d - 1]; const t = []; if (hol.includes(d)) t.push('Holiday'); if (x && x.vac.length && S.histView === 'actual') t.push('Vac: ' + x.vac.join(', ')); return t.join(' · '); };
   const row = (label, f) => `<tr><td>${label}</td>${[7, 8, 9, 10, 11].map(i => `<td class="n">${f(BT[i].actual)}</td><td class="n" style="color:var(--good)">${f(BT[i].engine)}</td>`).join('')}</tr>`;
   const hardN = x => Object.values(x.hard).reduce((a, b) => a + b, 0);
   return `<div class="row"><h2>History</h2><span class="spacer"></span>${['2026-07', '2026-08', '2026-09', '2026-10', '2026-11'].map(h => `<button class="btn ${h === k ? 'primary' : ''}" data-hm="${h}">${MONTHS[+h.slice(5) - 1]}</button>`).join('')}</div>
-  <div class="panel"><h3>Published schedules vs the engine, same inputs</h3>
+  ${adminView() ? `<div class="panel"><h3>Published schedules vs the engine, same inputs</h3>
     <p class="small muted">Each month was rebuilt with what the schedulers knew: that month's vacations, plus PGY-5, fellow and holiday dates locked as they actually happened. Scored against the approved rules.</p>
     <div class="tablewrap"><table><thead><tr><th></th>${[7, 8, 9, 10, 11].map(i => `<th class="n">${MONTHS[i - 1]} actual</th><th class="n">${MONTHS[i - 1]} engine</th>`).join('')}</tr></thead><tbody>
       ${row('Hard-rule breaks', hardN)}${row('Every-other-day calls', x => x.q2)}${row('Vacation bookends broken', x => x.bookendsBroken)}${row('Residents outside target', x => x.outTarget)}${row('Two-person days', x => x.two)}</tbody></table></div>
-    <p class="small muted">Most "breaks" in the real schedules are rules written down this month (H15 sister services; H2, which rules out a PGY-4 in the mid slot), not mistakes. The engine uses more two-person days for the same reason.</p></div>
+    <p class="small muted">Most "breaks" in the real schedules are rules written down this month (H15 sister services; H2, which rules out a PGY-4 in the mid slot), not mistakes. The engine uses more two-person days for the same reason.</p></div>` : ''}
   <div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="spacer"></span>
-    <button class="btn ${S.histView === 'actual' ? 'primary' : ''}" data-hv="actual">Published schedule</button><button class="btn ${S.histView === 'engine' ? 'primary' : ''}" data-hv="engine">Engine version</button></div>
+    ${adminView() ? `<button class="btn ${S.histView === 'actual' ? 'primary' : ''}" data-hv="actual">Published schedule</button><button class="btn ${S.histView === 'engine' ? 'primary' : ''}" data-hv="engine">Engine version</button>` : ''}</div>
     ${calendarHTML(A, k, { click: false, tags })}
-    ${S.histView === 'actual' && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
+    ${adminView() && S.histView === 'actual' && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 
 function viewNotes() {
@@ -374,11 +399,11 @@ function viewApproval() {
   if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
   if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
   if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
-  return `<div class="row"><h2>Approval · ${monthName(S.month)}</h2><span class="muted small">The PGY-4 schedulers build, the PD approves, then it goes out. Every version is kept. Swaps after publishing: a scheduler or PGY-5 chief approves (SW3).</span></div>
+  return `<div class="row"><h2>Approval · ${monthName(S.month)}</h2><span class="muted small">The scheduler/chief builds, the PD approves, then it goes out. Every version is kept. Swaps after publishing: a scheduler or PGY-5 chief approves (SW3).</span></div>
   <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check the dashboard', 'PD approves or sends back', 'Shared as the calendar'][i]}</span></div>`).join('')}</div>
-  <div class="panel"><div class="row">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
+  ${!adminView() ? `<p class="small muted">Where this month's schedule is in the approval process. You'll see it on the Schedule tab once it's published.</p>` : `<div class="panel"><div class="row">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
   <div class="grid2"><div class="panel"><h3>Versions</h3>${st.versions.length ? `<div class="tablewrap"><table><thead><tr><th>Version</th><th>Saved</th><th>Status</th><th class="n">Changed days</th><th></th></tr></thead><tbody>${st.versions.slice().reverse().map(v => `<tr><td>v${v.n}</td><td>${new Date(v.at).toLocaleString()}</td><td>${esc(v.status)}</td><td class="n">${v.changed == null ? '—' : v.changed}</td><td>${canEdit() ? `<button class="btn" data-restore="${v.n}" style="padding:1px 8px">Restore</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No saved versions yet.</p>'}</div>
-  <div class="panel"><h3>Activity</h3><ul class="issues">${st.log.slice(-14).reverse().map(l => `<li class="ok small"><b>${esc(l.role)}</b> ${esc(l.text)} <span class="muted">· ${new Date(l.at).toLocaleString()}</span></li>`).join('') || '<li class="ok small">No activity yet.</li>'}</ul></div></div>`;
+  <div class="panel"><h3>Activity</h3><ul class="issues">${st.log.slice(-14).reverse().map(l => `<li class="ok small"><b>${esc(l.role)}</b> ${esc(l.text)} <span class="muted">· ${new Date(l.at).toLocaleString()}</span></li>`).join('') || '<li class="ok small">No activity yet.</li>'}</ul></div></div>`}`;
 }
 function saveVersion(status) { const st = cur(); const prev = st.versions.at(-1); const A = st.A.map(a => [a.U, a.M, a.I]); const changed = prev ? A.filter((a, i) => a.join() !== (prev.A[i] || []).join()).length : null; const n = (prev ? prev.n : 0) + 1; st.versions.push({ n, at: new Date().toISOString(), status, A, changed }); const k = S.month; const ins = () => sb.from('versions').insert({ month_key: k, n, status, schedule: A, changed, created_by: me.id }).then(() => {}); if (existing.has(k)) ins(); else setTimeout(ins, 1500); }
 function scheduleText() { const k = S.month; return `${monthName(k)} call schedule (${cur().status})\n` + cur().A.map((a, i) => `${dateLabel(k, i + 1)}: ${[a.U, a.M, a.I].filter(Boolean).join(' / ')}${a.M ? '' : ' (two-person)'}${(HOLNAMES[k] || {})[i + 1] ? ' [' + HOLNAMES[k][i + 1] + ']' : ''}`).join('\n'); }
@@ -461,7 +486,7 @@ function openDrawer(d, s) {
 let PEOPLE = null, peopleMsg = '';
 async function loadPeople() { const { data, error } = await sb.functions.invoke('admin-users', { body: { action: 'list' } }); if (error || (data && data.error)) { peopleMsg = 'Could not load accounts: ' + ((data && data.error) || error.message); PEOPLE = []; } else PEOPLE = data.users; if (route() === 'people') render(); }
 function viewPeople() {
-  if (!S.isAdmin) return '<div class="panel">Only admins manage accounts.</div>';
+  if (!adminView()) return '<div class="panel">Only admins manage accounts.</div>';
   if (PEOPLE === null) { loadPeople(); return '<div class="panel">Loading accounts…</div>'; }
   const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief (same powers as scheduler)'], ['pd', 'Program director'], ['resident', 'Resident']];
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
@@ -469,7 +494,7 @@ function viewPeople() {
   <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
   ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
     <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-    <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Admin"></td>
+    <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id || p.role !== 'resident' ? 'disabled' : ''} aria-label="Admin" title="${p.role !== 'resident' ? 'Schedulers, chiefs and the PD are always admins' : ''}"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
     <td><button class="btn" data-plink="${p.id}" style="padding:1px 8px">${p.confirmed ? 'Reset link' : 'Setup link'}</button></td></tr>`).join('')}
   </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the person's history. You can't change your own role, admin or active status, so nobody locks themselves out.</p></div>
@@ -502,7 +527,7 @@ const VIEWS = { people: viewPeople, schedule: viewSchedule, inputs: viewInputs, 
 function route() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'schedule'; }
 // Make the signed-in person's own name stand out everywhere it appears (calendar, rounding, tables, dashboard).
 const MY_NAME = (() => { const dn = String(CTX.profile.display_name || '').trim().toLowerCase(), first = dn.split(/\s+/)[0];
-  const names = Object.keys(DATA.pgy || {}); return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || null; })();
+  const names = Object.keys(DATA.pgy || {}); const nick = DATA.nicknameOf || {}; return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || names.find(n => (nick[n] || '').toLowerCase() === first) || null; })();
 function highlightMe(root) {
   if (!MY_NAME || !root) return;
   const re = new RegExp('\\b' + MY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
@@ -514,8 +539,11 @@ function highlightMe(root) {
     t.parentNode.replaceChild(frag, t); });
   root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
 }
+const ADMIN_TABS = ['dashboard', 'rules', 'people'];
 function render() {
-  const r = route();
+  let r = route();
+  if (ADMIN_TABS.includes(r) && !adminView()) { r = 'schedule'; history.replaceState(null, '', '#schedule'); }
+  document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); });
   const pv = $('#previewNote'); if (pv) pv.hidden = !(S.isAdmin && roleKey(S.role) !== S.realRole);
   document.querySelectorAll('nav.tabs a').forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + r ? 'page' : 'false'));
   if (cur().A && !['schedule', 'dashboard'].includes(r)) evaluateNow();
@@ -526,6 +554,7 @@ function wire() {
   const st = cur(), k = S.month;
   wirePeople();
   const on = (sel, f) => { const el = $(sel); if (el) el.onclick = f; };
+  document.querySelectorAll('[data-imp]').forEach(el => el.onclick = () => showImprove(IMPROVE[+el.dataset.imp]));
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
   on('#swapX', () => { S.trioSwap.xmas = !S.trioSwap.xmas; logEvent(k, 'Swapped which Christmas trio starts'); generate(true); });
   on('#swapN', () => { S.trioSwap.ny = !S.trioSwap.ny; logEvent(k, 'Swapped which New Year trio starts (January follows)'); generate(true); });

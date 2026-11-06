@@ -122,3 +122,20 @@ input[type="number"] { width: 64px; }
 /* signed-in person's own name */
 mark.me { white-space: nowrap; display: inline-block; line-height: 1.2; background: #ffd43b; color: #1a1a1a; font-weight: 700; border-radius: 3px; padding: 0 3px; box-shadow: 0 0 0 1px #e0a800; }
 .chip.has-me { box-shadow: 0 0 0 2px #e0a800; font-weight: 700; }
+
+/* dashboard: click-to-see-dates */
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.linkish:hover { text-decoration-style: solid; }
+.modal-ov { position: fixed; inset: 0; background: rgba(15, 20, 30, .45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal { background: var(--panel, #fff); color: var(--ink, #111); border-radius: 10px; padding: 16px; width: min(460px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+.minical { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.mc-h { font-size: 11px; text-align: center; color: var(--muted, #666); font-weight: 600; }
+.mc-d { position: relative; border: 1px solid var(--line, #ddd); border-radius: 6px; min-height: 46px; padding: 3px 4px; font-size: 12px; }
+.mc-d.wk { background: var(--wk, #f3f4f6); }
+.mc-d.vac { background: repeating-linear-gradient(45deg, #e5e7eb, #e5e7eb 4px, #f3f4f6 4px, #f3f4f6 8px); }
+.mc-d.call { border-color: #3b6fd8; box-shadow: inset 0 0 0 1px #3b6fd8; }
+.mc-d.call i { position: absolute; bottom: 3px; left: 4px; font-style: normal; font-size: 10px; color: #3b6fd8; font-weight: 600; }
+.mc-d.flag { background: #fde2e1; border-color: #d64545; box-shadow: inset 0 0 0 2px #d64545; }
+.mc-d.flag i { color: #b42318; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; border: 1px solid var(--line, #ccc); }
+.sw.call { box-shadow: inset 0 0 0 2px #3b6fd8; } .sw.flag { background: #fde2e1; box-shadow: inset 0 0 0 2px #d64545; } .sw.vac { background: repeating-linear-gradient(45deg, #e5e7eb, #e5e7eb 3px, #f3f4f6 3px, #f3f4f6 6px); } .sw.wk { background: var(--wk, #f3f4f6); }
