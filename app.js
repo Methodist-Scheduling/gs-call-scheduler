@@ -611,7 +611,7 @@ function viewRules() {
   const R = S.rules, t = R.targets, dis = isScheduler() || S.role === 'Program Director' ? '' : 'disabled'; // the PD can change any rule setting
   const tr = (k, label) => `<tr><td>${label}</td><td><input type="number" min="0" max="12" data-t="${k}" data-i="0" value="${t[k][0]}" ${dis} aria-label="${label} minimum"></td><td><input type="number" min="0" max="12" data-t="${k}" data-i="1" value="${t[k][1]}" ${dis} aria-label="${label} maximum"></td></tr>`;
   const p4 = Object.keys(DATA.pgy).filter(n => DATA.pgy[n] === 4);
-  return `<div class="row"><h2>Rules</h2><span class="muted small">Rules ${esc(RC.version)} (v1.1 PD approved Nov 5; v1.3 changes pending PD sign-off). Settings first, then every rule in plain English, then a how-to guide.</span></div>
+  return `<div class="row"><h2>Rules</h2><span class="muted small">Rules ${esc(RC.version)} (PD approved: v1.1 Nov 5, v1.3 Nov 6). Settings first, then every rule in plain English, then a how-to guide.</span></div>
   <nav class="row small" style="gap:12px;margin:-4px 0 10px"><a href="#rules" data-jump="rsettings">Settings</a>${RC.groups.map(g => `<a href="#rules" data-jump="rg-${g.id}">${esc(g.title)}</a>`).join('')}<a href="#rules" data-jump="rguide">How to use this app</a></nav>
   <div class="grid2" id="rsettings"><div class="panel"><h3>Call targets per month (F1)</h3>
     <table style="max-width:420px"><thead><tr><th>Group</th><th>Min</th><th>Max</th></tr></thead><tbody>${tr(1, 'Interns')}${tr(2, 'PGY-2')}${tr(3, 'PGY-3')}${tr(4, 'PGY-4')}${tr(5, 'PGY-5')}${tr('F', 'Fellow')}</tbody></table>
