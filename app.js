@@ -400,7 +400,7 @@ function askRebuild(k) {
     (ov, close) => { ov.querySelector('#rbNow').onclick = () => { close(); S.month = k; $('#monthSel').value = k; location.hash = 'schedule'; generate(true, k); }; });
 }
 function showImprove(x) {
-  const k = S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
+  const k = x.month || S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
   let cells = '<div class="mc-h">S</div><div class="mc-h">M</div><div class="mc-h">T</div><div class="mc-h">W</div><div class="mc-h">T</div><div class="mc-h">F</div><div class="mc-h">S</div>' + '<div></div>'.repeat(first);
   for (let d = 1; d <= nd; d++) { const w = (first + d - 1) % 7, c = [];
     if (w === 0 || w === 6) c.push('wk'); if (x.vac.includes(d)) c.push('vac'); if (x.calls.includes(d)) c.push('call'); if (x.flag.includes(d)) c.push('flag');
@@ -408,7 +408,7 @@ function showImprove(x) {
   const ov = document.createElement('div'); ov.className = 'modal-ov';
   ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(x.t)}"><div class="row"><h3 style="margin:0">${esc(x.t)}</h3><span class="spacer"></span><button class="btn" id="mcClose">Close</button></div>
     <p class="small muted" style="margin:6px 0 10px">${esc(monthName(k))} · ${esc(x.name)}. ${esc(x.note || '')}</p><div class="minical">${cells}</div>
-    <div class="row small" style="margin-top:10px;gap:14px"><span><span class="sw call"></span>On call</span><span><span class="sw flag"></span>The problem</span><span><span class="sw vac"></span>Vacation</span><span><span class="sw wk"></span>Weekend</span></div></div>`;
+    <div class="row small" style="margin-top:10px;gap:14px"><span><span class="sw call"></span>On call</span><span><span class="sw flag"></span>${esc(x.flagLabel || 'The problem')}</span><span><span class="sw vac"></span>Vacation</span><span><span class="sw wk"></span>Weekend</span></div></div>`;
   document.body.appendChild(ov); highlightMe(ov);
   const close = () => { ov.remove(); document.removeEventListener('keydown', esc_); }; const esc_ = e => { if (e.key === 'Escape') close(); };
   ov.onclick = e => { if (e.target === ov) close(); }; ov.querySelector('#mcClose').onclick = close; document.addEventListener('keydown', esc_); ov.querySelector('#mcClose').focus();
@@ -441,7 +441,7 @@ function viewNotes() {
   const otherPend = S.requests.filter(r => r.month_key !== k && r.status === 'pending').length;
   return `<div class="row"><h2>Requests · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
-    ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
+    ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><button class="linkish" data-qcal="${r.id}" title="See it on ${esc(r.resident)}'s calendar"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())} 📅</button>${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
       <div class="row" style="margin-top:6px;gap:6px">${canDecide() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px;flex:1">` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
   ${CTX.profile.can_preview ? stressPanel(k) : ''}
   ${adminSwapsHTML(k)}
@@ -615,7 +615,7 @@ function adminSwapsHTML(k) {
     const P = E.prepare(buildInput(x.month_key)), base = E.evaluate(P, A), trial = A.map(y => Object.assign({}, y)); trial[x.day_a - 1][x.slot] = x.target; trial[x.day_b - 1][x.slot] = x.requester; const ev = E.evaluate(P, trial);
     if (ev.hard > base.hard) { const before = new Set(base.issues.map(i => i.msg)); const nw = ev.issues.find(i => i.sev === 'hard' && !before.has(i.msg)); return nw ? nw.msg : 'breaks a hard rule'; } return ''; };
   return `<div class="panel" style="margin-top:14px"><h3>Swaps (${agreed.length} to approve)</h3><p class="small muted">Both residents agreed. Approving updates the published schedule right away; the PD isn't involved (SW3).</p>
-    ${agreed.length ? `<ul class="issues">${agreed.map(x => { const p = check(x); return `<li class="${p ? 'hard' : 'soft'}">${swapLine(x)} · ${esc(monthName(x.month_key))}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="small">${p ? '⛔ ' + esc(p) : '✅ Keeps every hard rule'}</div>
+    ${agreed.length ? `<ul class="issues">${agreed.map(x => { const p = check(x); return `<li class="${p ? 'hard' : 'soft'}"><button class="linkish" data-swcal="${x.id}" title="See the trade on a calendar">${swapLine(x)} 📅</button> · ${esc(monthName(x.month_key))}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="small">${p ? '⛔ ' + esc(p) : '✅ Keeps every hard rule'}</div>
       ${isScheduler() ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swok="${x.id}" ${p ? 'disabled' : ''} style="padding:1px 10px">Approve</button><button class="btn" data-swden="${x.id}" style="padding:1px 10px">Deny</button><input type="text" data-swdwhy="${x.id}" placeholder="Reason (they'll see it)" style="flex:1;min-width:180px"></div>` : ''}</li>`; }).join('')}</ul>` : '<p class="small muted">Nothing waiting.</p>'}
     ${waiting.length ? `<details><summary class="small">Waiting on the other resident (${waiting.length})</summary><ul class="issues">${waiting.map(x => `<li class="small">${swapLine(x)}</li>`).join('')}</ul></details>` : ''}
     ${done.length ? `<details><summary class="small">Recent decisions</summary><ul class="issues">${done.map(x => `<li class="small">${swapLine(x)} · ${esc(x.status)} by ${esc(whoName(x.decided_by))} · ${esc(whenTxt(x.decided_at))}${x.admin_reason ? ' · “' + esc(x.admin_reason) + '”' : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
@@ -676,6 +676,21 @@ async function approveSwap(id) {
   logEvent(k, `Swap approved: ${x.requester} ${dateLabel(k, x.day_a)} ⇄ ${x.target} ${dateLabel(k, x.day_b)} (asked by ${x.requester}, agreed by ${x.target})`);
   if (st.status === 'Published') saveVersion('Revised (swap)'); save(k);
   await sb.from('swaps').update({ status: 'approved', decided_by: me.id, decided_at: new Date().toISOString() }).eq('id', id); await loadSwaps(); render(); toast('Swap approved. Both residents will see it at their next sign-in.');
+}
+// calendar popups for requests and swaps under review
+function requestCal(r) {
+  const k = r.month_key, st = S.M[k], P = st && st.A ? E.prepare(buildInput(k)) : null, p = P && P.byName[r.resident];
+  const calls = st && st.A ? st.A.map((a, i) => [a.U, a.M, a.I].includes(r.resident) ? i + 1 : 0).filter(Boolean) : [];
+  const clash = r.type === 'want' ? [] : r.type === 'protected' ? r.days.filter(d => calls.includes(d - 1)) : r.days.filter(d => calls.includes(d));
+  const what = { off: 'asks to be off', want: 'asks to be on call', block: 'is unavailable', protected: 'has an exam or event (not post-call)', colorectal: 'big colorectal day' }[r.type] || r.type;
+  showImprove({ month: k, t: `${r.resident} ${what}: ${r.days.map(d => dateLabel(k, d)).join(', ')}`, name: r.resident, calls, vac: p ? [...p.vacAll] : [], flag: r.days, flagLabel: 'Requested',
+    note: (r.note ? `“${r.note}”. ` : '') + (!st || !st.A ? 'No draft yet for this month, so there are no calls to compare.' : clash.length ? `Right now the draft has them on call ${clash.map(d => dateLabel(k, d)).join(', ')}${r.type === 'protected' ? ' (the night before)' : ''}; accepting and rebuilding should move that.` : r.type === 'want' ? (r.days.some(d => calls.includes(d)) ? 'The draft already has them on call that day.' : 'The draft doesn’t have them on call that day yet.') : 'The current draft already fits this request.') });
+}
+function swapCal(x) {
+  const k = x.month_key, st = S.M[k], P = st && st.A ? E.prepare(buildInput(k)) : null, p = P && P.byName[x.requester];
+  const calls = st && st.A ? st.A.map((a, i) => [a.U, a.M, a.I].includes(x.requester) ? i + 1 : 0).filter(Boolean) : [];
+  showImprove({ month: k, t: `${x.requester} gives ${dateLabel(k, x.day_a)} to ${x.target}, takes ${dateLabel(k, x.day_b)}`, name: x.requester, calls, vac: p ? [...p.vacAll] : [], flag: [x.day_a, x.day_b], flagLabel: 'The two days being traded',
+    note: `${x.requester}'s calendar today. After the trade, ${x.requester} works ${dateLabel(k, x.day_b)} instead of ${dateLabel(k, x.day_a)}; ${x.target} does the opposite.` });
 }
 function swapNotices() { // shown at sign-in to residents
   const out = [];
@@ -865,6 +880,8 @@ function wire() {
   on('#inputsApply', () => { location.hash = 'schedule'; generate(true); });
   on('#interpret', interpret);
   const notes = $('#notes'); if (notes) notes.oninput = () => { S.notes[k] = notes.value; saveNotes(k); };
+  document.querySelectorAll('[data-qcal]').forEach(b => b.onclick = () => requestCal(S.requests.find(x => x.id === +b.dataset.qcal)));
+  document.querySelectorAll('[data-swcal]').forEach(b => b.onclick = () => swapCal(S.swaps.find(x => x.id === +b.dataset.swcal)));
   document.querySelectorAll('[data-qacc]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qacc); await setRequest(r.id, { status: 'accepted', decided_by: me.id, decided_at: new Date().toISOString(), reason: '' }); logEvent(k, `Accepted ${r.resident}'s request`); render(); askRebuild(r.month_key); });
   document.querySelectorAll('[data-qden]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qden); const why = (document.querySelector(`[data-qwhy="${r.id}"]`) || {}).value || ''; await setRequest(r.id, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), reason: why.trim() }); logEvent(k, `Denied ${r.resident}'s request`); render(); });
   const swUpd = async (id, patch, msg) => { const { error } = await sb.from('swaps').update(patch).eq('id', id); if (error) return toast('Not saved: ' + error.message); await loadSwaps(); render(); if (msg) toast(msg); };
