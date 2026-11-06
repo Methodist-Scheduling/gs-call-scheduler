@@ -71,6 +71,7 @@ window.RULES_CATALOG = {
         { id: 'HD1', title: 'Working', plain: '"Working" means on call that day. Those cells are locked first.', computer: 'Locked cells.' },
         { id: 'HD2', title: 'Backup', plain: '"Backup" is called in if a Working resident calls out. Each use is recorded for fairness.', computer: 'Recorded on the activity log.' },
         { id: 'HD3', title: 'Trios', plain: 'Christmas: one trio takes Dec 23, 25, 27, the other Dec 24, 26. New Year\'s: Dec 30, Jan 1, 3 and Dec 31, Jan 2. A scheduler or chief picks which trio starts.', computer: 'The six Working names are split into two valid trios; "Swap start" flips them.' },
+        { id: 'HD5', title: 'Holiday rounding', plain: 'On a holiday (and a holiday weekend), only the people on call that day round. Each is assigned a service, their own when possible. Everyone else is off: nobody is pulled in, and the ICU and T/EGS alternation pauses.', computer: 'Holiday days build rounding from that day’s callers only, own service first, then the empty services.' },
         { id: 'HD4', title: 'Counts toward targets', plain: 'Holiday call counts toward monthly targets and the weekend/holiday balance.', computer: 'Included in F1 and F3.' }
       ] },
     { id: 'TA', title: 'Approval and swaps', tier: 'Nothing goes out without the PD',

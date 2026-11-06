@@ -52,7 +52,7 @@ main { padding: 18px 20px 60px; max-width: 1320px; margin: 0 auto; display: grid
 .cal .day { background: var(--panel); min-height: 118px; padding: 6px; display: flex; flex-direction: column; gap: 3px; }
 .cal .day.wk { background: var(--wk); }
 .cal .day.blank { background: var(--bg); }
-.cal .dn { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 13px; }
+.cal .dn { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: baseline; gap: 2px 8px; font-weight: 600; font-size: 13px; }
 .cal .tag { font-size: 10.5px; font-weight: 700; color: var(--hol); text-transform: uppercase; letter-spacing: .04em; }
 .chip { display: flex; align-items: center; gap: 5px; width: 100%; text-align: left; border: 0; border-left: 3px solid; border-radius: 4px; padding: 2px 6px; font-size: 12.5px; line-height: 1.35; background: var(--wk); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip.U { border-color: var(--lv-u); background: var(--soft-u); } .chip.M { border-color: var(--lv-m); background: var(--soft-m); } .chip.I { border-color: var(--lv-i); background: var(--soft-i); }
@@ -216,4 +216,7 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
 .cal.list .dn { width: 100%; }
 .cal.list .chip { flex: 0 1 220px; }
 .cal.list .day .rnd { width: 100%; }
-.mineToggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.mineToggle { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; padding: 10px 16px; margin: 0 0 12px; border: 2px solid var(--accent); border-radius: 999px; background: var(--panel); color: var(--accent); cursor: pointer; user-select: none; }
+.mineToggle input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+.mineToggle.on { background: var(--accent); color: var(--accent-ink); }
+.mineToggle .muted { color: inherit; opacity: .8; font-weight: 500; }

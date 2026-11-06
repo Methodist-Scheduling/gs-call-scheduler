@@ -93,7 +93,7 @@
     days.forEach(x => { if (!isWknd(x.w)) return; const rec = RB[x.d]; if (!rec || !rec.weekend) return; const a = A[x.d - 1];
       ['I', 'M', 'U'].forEach(s => { const p = a[s] && byName[a[s]]; if (!p) return;
         if ((input.locks || []).some(l => l.day === x.d && l.slot === s && l.name === p.name)) return; // locked picks and holiday list win (H10, H11)
-        if (p.lvl === 'F' && !p.excluded && !rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (fellow) on call on an ICU-resident weekend`, 'hard');
+        if (p.lvl === 'F' && !p.excluded && !rec.fellowWeek && !rec.holiday) add('W3', 1e6, `Day ${x.d}: ${p.name} (fellow) on call on an ICU-resident weekend`, 'hard');
         if (p.rotation === 'ICU' && p.lvl !== 'F' && rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (ICU resident) on call on the fellow's weekend`, 'hard');
         if ((rec.tegsOff || []).includes(p.name)) add('W6', 1e6, `Day ${x.d}: ${p.name} on call on their T/EGS off weekend`, 'hard'); }); });
     const priorWk = firstFri ? new Set(Object.entries(prior).filter(([, ds]) => ds.some(d => d >= firstFri - 7 && d <= firstFri - 5)).map(([n]) => n)) : new Set();
@@ -259,6 +259,13 @@
       // the SICU fellow never cross-covers; she rounds only ICU, only on her weekends
       const all = [...new Set(callDays.map(d => A[d - 1]).filter(Boolean).flatMap(a => [a.I, a.M, a.U]).filter(Boolean))];
       const callers = all.filter(n => !P.byName[n] || P.byName[n].lvl !== 'F');
+      // Holidays (and holiday weekends): only that day's callers round, each on their own service when possible,
+      // the rest spread across the empty services. Everyone else is off: no fill-ins, no alternation.
+      if (refHoliday) {
+        all.forEach(n => { const p = P.byName[n]; if (!p) return; const k = p.lvl === 'F' ? 'ICU' : blockOf(p); if (k && !b[k].length) b[k].push(n); });
+        all.forEach(n => { if (placed(n) || !P.byName[n]) return; const k = Object.keys(b).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
+        return { blocks: b, callers: all, workers: new Set(all) };
+      }
       callers.forEach(n => { const p = P.byName[n]; if (!p) return; const k = blockOf(p); if (k && !(k === 'ICU' && fellowWeek)) b[k].push(n); });
       // W3: fellow and ICU resident alternate weekends. Fellow weekend: fellow alone on ICU (an ICU resident on call cross-covers elsewhere).
       // Other weekends: the ICU resident(s) always round ICU.
@@ -314,9 +321,10 @@
     const tOff = tUppers.length >= 2 ? [...Array(tUppers.length).keys()].sort((a, c) => (tConf(a) - tConf(c)) || ((a !== tStart) - (c !== tStart)))[0] : 0;
     WK.forEach((w, i) => {
       const days = w.days;
-      const fw = FW.has(i);
-      const tUp = tUppers.length >= 2 ? tOn(i, tOff) : null;
-      const rec = applyOvr(build(days, w.ref, prevWorkers, fw, false, tUp), w.ref);
+      const holWk = (holidays || []).some(d => days.includes(d));   // e.g. the Christmas/New Year's weekend: holiday rules
+      const fw = !holWk && FW.has(i);
+      const tUp = !holWk && tUppers.length >= 2 ? tOn(i, tOff) : null;
+      const rec = applyOvr(build(days, w.ref, prevWorkers, fw, holWk, tUp), w.ref); if (holWk) rec.holiday = true;
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
