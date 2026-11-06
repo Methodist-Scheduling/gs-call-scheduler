@@ -857,7 +857,7 @@ function wire() {
 }
 let estConfirmArmed = false;
 function confirmInline() { if (estConfirmArmed) { estConfirmArmed = false; return true; } estConfirmArmed = true; toast('Some calls depend on unconfirmed dates (⚠). Click Send again to send anyway.'); setTimeout(() => estConfirmArmed = false, 6000); return false; }
-const rs = $('#roleSel'); if (rs) { rs.value = S.role; rs.onchange = e => { S.role = e.target.value; render(); }; }
+const rs = $('#roleSel'); if (rs && CTX.profile.can_preview) { rs.value = S.role; rs.onchange = e => { S.role = e.target.value; render(); }; }
 function fillMonths() { const ks = S.isAdmin ? KEYS : KEYS.filter(k => S.M[k].A); $('#monthSel').innerHTML = (ks.length ? ks : [S.month]).map(k => `<option value="${k}" ${k === S.month ? 'selected' : ''}>${monthName(k)}</option>`).join(''); }
 fillMonths();
 $('#monthSel').onchange = e => { S.month = e.target.value; S.proposals = []; render(); };
