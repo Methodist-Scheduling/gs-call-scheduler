@@ -245,3 +245,18 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
 .better { color: var(--better); font-weight: 700; } .worse { color: var(--worse); font-weight: 700; }
 
 td.clk { cursor: pointer; } td.clk:hover { text-decoration: underline dotted; }
+
+/* People table: fits the page, no sideways scrolling; on phones each person becomes a card */
+.ptable { width: 100%; } .ptable td { vertical-align: middle; } .ptable select.f { max-width: 170px; }
+@media (max-width: 720px) {
+  .ptable thead { display: none; } .ptable, .ptable tbody, .ptable tr, .ptable td { display: block; width: 100%; }
+  .ptable tr { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  .ptable td { border: 0; padding: 3px 0; } .ptable select.f { max-width: none; width: 100%; }
+  .ptable td:nth-child(4)::before { content: 'Admin '; } .ptable td:nth-child(5)::before { content: 'Active '; }
+}
+
+.addform { grid-template-columns: 96px 1fr !important; align-items: center; gap: 10px 12px; }
+.addform > label { white-space: nowrap; margin: 0; }
+.addform input[type=checkbox] { justify-self: start; width: auto; margin: 0; }
+.checkline { display: flex !important; align-items: flex-start; gap: 8px; margin: 12px 0 0; line-height: 1.4; }
+.checkline input { flex: none; width: auto; margin: 3px 0 0; }
