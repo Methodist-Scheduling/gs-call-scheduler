@@ -65,6 +65,14 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
+    if (body.action === 'delete') {
+      if (body.id === me.id) return json({ error: 'You can’t delete your own account.' }, 400);
+      const { data: target } = await admin.from('profiles').select('username, display_name').eq('id', body.id).maybeSingle();
+      const { error } = await admin.auth.admin.deleteUser(body.id); // profile row goes with it (on delete cascade)
+      if (error) return json({ error: error.message }, 400);
+      await log(`deleted the account of ${target?.display_name || target?.username || body.id}`);
+      return json({ ok: true });
+    }
     if (body.action === 'link') {
       const { data: u } = await admin.auth.admin.getUserById(body.id);
       if (!u?.user?.email) return json({ error: 'No email on that account.' }, 400);

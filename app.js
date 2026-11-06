@@ -154,7 +154,8 @@ if (['scheduler', 'chief'].includes(S.realRole) && !existing.has('2026-12') && S
 // backfill the saved rounding copy residents read from
 if (['scheduler', 'chief'].includes(S.realRole)) Object.keys(S.M).forEach(k => { const st = S.M[k]; if (existing.has(k) && st.A && !st.rnd && st.status !== 'PD review') save(k); });
 
-const ROSTER_NAMES = () => Object.keys(DATA.pgy || {}).sort((x, y) => order(x) - order(y) || x.localeCompare(y));
+// roster = everyone on this year's current/upcoming monthly schedules (people who left, like a former fellow, drop off)
+const ROSTER_NAMES = () => [...new Set(KEYS.flatMap(k => Object.keys(DATA.rotations[k] || {})))].sort((x, y) => order(x) - order(y) || x.localeCompare(y));
 // ---------- requests (own table; residents only ever load their own) ----------
 const cons = k => S.requests.filter(r => r.month_key === k && r.status === 'accepted').map(r => ({ id: r.id, type: r.type, name: r.resident, days: r.days, reason: r.note, source: r.source }));
 async function loadRequests() { const { data, error } = await sb.from('requests').select('*').order('created_at'); if (!error) S.requests = data || []; }
@@ -542,8 +543,8 @@ function viewPeople() {
     <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id || p.role !== 'resident' ? 'disabled' : ''} aria-label="Admin" title="${p.role !== 'resident' ? 'Schedulers, chiefs and the PD are always admins' : ''}"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
-    <td><button class="btn" data-plink="${p.id}" style="padding:1px 8px">${p.confirmed ? 'Reset link' : 'Setup link'}</button></td></tr>`).join('')}
-  </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the person's history. You can't change your own role, admin or active status, so nobody locks themselves out.</p></div>
+    <td style="white-space:nowrap"><button class="btn" data-plink="${p.id}" style="padding:1px 8px">${p.confirmed ? 'Reset link' : 'Setup link'}</button> ${p.id === me.id ? '' : `<button class="btn" data-pdel="${p.id}" style="padding:1px 8px;color:var(--crit)">Delete</button>`}</td></tr>`).join('')}
+  </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the account (best for someone on leave). Delete removes the account for good; their past schedules, requests and log entries stay. You can't change or delete your own account, so nobody locks themselves out.</p></div>
   <div class="panel"><h3>Add a person</h3><div class="kv small">
     <label for="nName">Full name</label><input id="nName" type="text" placeholder="Jane Doe">
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="optional if you copy the link instead">
@@ -552,10 +553,38 @@ function viewPeople() {
     <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox" style="justify-self:start;width:auto;margin:0"></div>
     <label class="row small" style="margin-top:8px"><input type="checkbox" id="nSend" checked> Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</label>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="nAdd">Add person</button></div>
-    <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div></div>`;
+    <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div></div>
+  ${rosterPanel()}`;
 }
+const PGYS = [['1', 'PGY-1'], ['2', 'PGY-2'], ['3', 'PGY-3'], ['4', 'PGY-4'], ['5', 'PGY-5'], ['F', 'Fellow']];
+function rosterPanel() {
+  const ed = isScheduler(), names = ROSTER_NAMES();
+  return `<div class="panel" style="margin-top:14px"><h3>Call roster (${names.length})</h3><p class="small muted">Who's on this year's schedules. This is separate from accounts: the roster is who gets scheduled; accounts are who can sign in. Removing someone takes them off upcoming months that aren't published yet. Past months and history keep them.${ed ? '' : ' A scheduler or chief edits the roster.'}</p>
+    <div class="tablewrap"><table style="max-width:560px"><thead><tr><th>Roster name</th><th>Level</th><th></th></tr></thead><tbody>
+    ${names.map(n => `<tr><td>${esc(n)}</td><td><select class="f" data-rpgy="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} level">${PGYS.map(([v, l]) => `<option value="${v}" ${String(DATA.pgy[n]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td>${ed ? `<button class="btn" data-rrm="${esc(n)}" style="padding:1px 8px">Remove</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div>
+    ${ed ? `<h3 style="margin-top:14px">Add to the roster</h3><div class="kv small" style="max-width:560px"><label for="rnName">Roster name</label><input id="rnName" type="text" placeholder="first name as it appears on the schedule">
+      <label for="rnPgy">Level</label><select id="rnPgy" class="f">${PGYS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+      <label for="rnFrom">Starting</label><select id="rnFrom" class="f">${KEYS.map(k => `<option value="${k}">${monthName(k)}</option>`).join('')}</select>
+      <label for="rnRot">Rotation</label><select id="rnRot" class="f">${ROTATIONS.map(r => `<option>${r}</option>`).join('')}</select></div>
+      <p class="small muted">They get that rotation for every month from then on; fix individual months on the Inputs tab.</p>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="rnAdd">Add to roster</button></div>` : ''}</div>`;
+}
+async function saveRoster(msg) { const { error } = await sb.from('reference').update({ value: DATA }).eq('key', 'data'); if (error) return toast('Roster not saved: ' + error.message); toast(msg); }
 async function peopleAction(body, okMsg) { const { data, error } = await sb.functions.invoke('admin-users', { body }); if (error || (data && data.error)) { toast((data && data.error) || error.message); return null; } if (okMsg) toast(okMsg); return data; }
 function wirePeople() {
+  document.querySelectorAll('[data-pdel]').forEach(el => el.onclick = async () => {
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Delete forever?'; el.style.fontWeight = '700'; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ''; el.textContent = 'Delete'; el.style.fontWeight = ''; } }, 5000); return; }
+    const d = await peopleAction({ action: 'delete', id: el.dataset.pdel }, 'Account deleted.'); if (d) { PEOPLE = null; render(); } });
+  document.querySelectorAll('[data-rpgy]').forEach(el => el.onchange = async () => { const n = el.dataset.rpgy; DATA.pgy[n] = el.value === 'F' ? 'F' : +el.value; await saveRoster(`${n} is now ${el.value === 'F' ? 'a fellow' : 'PGY-' + el.value}.`); logEvent(S.month, `Roster: ${n} level → ${el.value}`); render(); });
+  document.querySelectorAll('[data-rrm]').forEach(el => el.onclick = async () => {
+    const n = el.dataset.rrm; if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Remove ' + n + '?'; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ''; el.textContent = 'Remove'; } }, 5000); return; }
+    KEYS.forEach(k => { if (S.M[k] && S.M[k].status === 'Published') return; delete DATA.rotations[k][n]; if (S.M[k]) { delete S.M[k].inputs[n]; if (existing.has(k)) save(k); } });
+    await saveRoster(`${n} removed from upcoming months.`); logEvent(S.month, `Roster: removed ${n}`); render(); });
+  const rnAdd = $('#rnAdd'); if (rnAdd) rnAdd.onclick = (async () => { const n = ($('#rnName').value || '').trim(); if (!/^[A-Za-z][A-Za-z' -]{1,30}$/.test(n)) return toast('Use their first name as it appears on the schedule.'); if (ROSTER_NAMES().includes(n)) return toast(n + ' is already on the roster.');
+    const v = $('#rnPgy').value, from = $('#rnFrom').value, rot = $('#rnRot').value; DATA.pgy[n] = v === 'F' ? 'F' : +v;
+    KEYS.filter(k => k >= from).forEach(k => { if (S.M[k] && S.M[k].status === 'Published') return; DATA.rotations[k][n] = { rotation: rot, vac_txt: null }; if (S.M[k]) { S.M[k].inputs[n] = { rotation: rot, vac: '', picks: '' }; if (existing.has(k)) save(k); } });
+    await saveRoster(`${n} added from ${monthName(from)}.`); logEvent(S.month, `Roster: added ${n} (${v === 'F' ? 'fellow' : 'PGY-' + v})`); render(); });
   document.querySelectorAll('[data-proster]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.proster, roster_name: el.value || null }, 'Roster name updated.'); loadPeople(); });
   document.querySelectorAll('[data-prole]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.prole, role: el.value }, 'Role updated.'); loadPeople(); });
   document.querySelectorAll('[data-padmin]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.padmin, is_admin: el.checked }, 'Admin updated.'); loadPeople(); });
