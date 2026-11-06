@@ -946,7 +946,7 @@ function viewPeople() {
   </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the account (best for someone on leave). Delete removes the account for good; their past schedules, requests and log entries stay. You can't change or delete your own account, so nobody locks themselves out.</p></div>
   <div class="panel" style="margin-top:14px;max-width:640px"><h3>Add a person</h3><div class="kv small addform">
     <label for="nName">Full name</label><input id="nName" type="text" placeholder="Jane Doe">
-    <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="optional if you copy the link instead">
+    <label for="nEmail">Email</label><input id="nEmail" type="email" placeholder="their email (kept for password resets, and to address the link)">
     <label for="nRoster">Roster name</label><select id="nRoster" class="f"><option value="">— (PD or not on the call roster)</option>${ROSTER_NAMES().map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <label for="nAdmin">Admin</label><label class="small checkcell"><input id="nAdmin" type="checkbox"> Can manage people and see admin tabs (schedulers, chiefs and the PD always are)</label>
@@ -992,20 +992,23 @@ function wirePeople() {
   document.querySelectorAll('[data-padmin]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.padmin, is_admin: el.checked }, 'Admin updated.'); loadPeople(); });
   document.querySelectorAll('[data-pprac]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pprac, practice_only: el.checked }, el.checked ? 'Practice only: they’ll land in the practice copy.' : 'Practice only off: they now see the real app.'); loadPeople(); });
   document.querySelectorAll('[data-pactive]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pactive, active: el.checked }, el.checked ? 'Account turned back on.' : 'Account turned off.'); loadPeople(); });
-  document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) showLink(d.link); });
+  document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) { const p = (PEOPLE || []).find(x => x.id === el.dataset.plink) || {}; showLink(d.link, { name: p.display_name, email: p.email }); } });
   const add = $('#nAdd'); if (add) add.onclick = async () => {
     const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, practice_only: $('#nPrac').checked, send_email: $('#nSend').checked };
     if (!body.display_name) return toast('Add their name.'); if (!body.email && body.send_email) return toast('No email: uncheck “Email them the setup link” and copy the link instead.');
     const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
-    if (d) { PEOPLE = null; render(); if (d.link) showLink(d.link); }
+    if (d) { PEOPLE = null; render(); if (d.link) showLink(d.link, { name: body.display_name, email: body.email }); }
   };
 }
-function showLink(link) {
+function showLink(link, who) {
+  who = who || {}; const first = String(who.name || '').trim().split(/\s+/)[0] || 'there', to = /@no-email\.example\.com$/.test(who.email || '') ? '' : (who.email || '');
+  const subj = 'Your GS Call Scheduler account', body = `Hi ${first},\n\nHere's your link to set up the GS Call Scheduler. Open it, then pick a username and password:\n\n${link}\n\nThe link works once and expires, so open it soon. If you're already signed in to another account in that browser, open it in a private/incognito window.\n\nThanks!`;
   const ov = document.createElement('div'); ov.className = 'modal-ov';
   ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="One-time setup link"><div class="row"><h3 style="margin:0">One-time link</h3><span class="spacer"></span><button class="btn" id="lkClose">Close</button></div>
     <p class="small muted" style="margin:6px 0 10px">Send this to the person, or open it yourself in a private window to set up a test account. It works once and expires in 24 hours.</p>
     <textarea id="lkText" readonly rows="4" style="width:100%;font-size:12px;word-break:break-all">${esc(link)}</textarea>
-    <div class="row" style="margin-top:10px"><button class="btn primary" id="lkCopy">Copy link</button><span class="small muted" id="lkMsg"></span></div></div>`;
+    <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap"><button class="btn primary" id="lkCopy">Copy link</button><a class="btn" href="mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}">✉️ Email it${to ? ' to ' + esc(to) : ''}</a><a class="btn" href="sms:?&body=${encodeURIComponent(body)}">💬 Text it</a><span class="small muted" id="lkMsg"></span></div>
+    <p class="small muted" style="margin:8px 0 0">Email and Text open your own mail or messages app with a ready-to-send note (no limit on how many you send).</p></div>`;
   document.body.appendChild(ov);
   const ta = ov.querySelector('#lkText'); ta.focus(); ta.select();
   const close = () => { ov.remove(); document.removeEventListener('keydown', k_); }; const k_ = e => { if (e.key === 'Escape') close(); };
