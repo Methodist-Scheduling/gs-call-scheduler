@@ -25,7 +25,7 @@ const S = {
 function blankMonth(k) {
   const inputs = {};
   Object.entries(DATA.rotations[k]).forEach(([n, r]) => { inputs[n] = { rotation: r.rotation, vac: r.vac_txt || '', picks: '' }; });
-  return { A: null, locks: {}, constraints: [], status: 'Draft', versions: [], log: [], inputs,
+  return { A: null, locks: {}, flags: {}, rndEdit: {}, constraints: [], status: 'Draft', versions: [], log: [], inputs,
     notesText: '' };
 }
 KEYS.forEach(k => S.M[k] = blankMonth(k));
@@ -71,7 +71,12 @@ function buildInput(k) {
   holidayLocks(k).forEach(([d, t]) => { inp.locks.push({ day: d, slot: 'U', name: t[2] }, { day: d, slot: 'M', name: t[1] }, { day: d, slot: 'I', name: t[0] }); });
   picksOf(k).forEach(p => { if (!inp.locks.some(l => l.day === p.day && l.slot === 'U')) inp.locks.push({ day: p.day, slot: 'U', name: p.name }); });
   Object.entries(st.locks).forEach(([kk, name]) => { const [d, s] = kk.split('|'); if (!inp.locks.some(l => l.day === +d && l.slot === s)) inp.locks.push({ day: +d, slot: s, name: name || null }); });
+  inp.rndOverride = st.rndEdit || {};
   cons(k).forEach(c => {
+    if (c.source === 'pd') { // requests the PD adds are always honored
+      if (c.type === 'off') { const p = inp.people.find(p => p.name === c.name); if (p) p.blockDays = (p.blockDays || []).concat(c.days); return; }
+      if (c.type === 'want') { const lv = DATA.pgy[c.name], slot = lv === 1 ? 'I' : (lv === 2 || lv === 3) ? 'M' : 'U'; c.days.forEach(d => { if (!inp.locks.some(l => l.day === d && l.slot === slot)) inp.locks.push({ day: d, slot, name: c.name }); }); return; }
+    }
     if (c.type === 'off' || c.type === 'want') c.days.forEach(d => inp.requests.push({ name: c.name, day: d, type: c.type }));
     if (c.type === 'protected') c.days.forEach(d => inp.protected.push({ day: d, names: [c.name], label: c.reason }));
     if (c.type === 'colorectal') c.days.forEach(d => inp.colorectalDays.push(d));
@@ -103,14 +108,15 @@ function generate(keepLocks, k) {
     const st = S.M[k]; if (!keepLocks) st.locks = {};
     const inp = buildInput(k); let best = null;
     for (let i = 0; i < 2; i++) { const r = E.solve(inp, { seed: (Date.now() + i * 7919) % 100000, iters: 30000 }); if (!best || r.ev.cost < best.ev.cost) best = r; }
-    st.A = best.A.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null }));
+    st.A = best.A.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null })); st.stale = false;
+    st.flags = keepLocks ? Object.fromEntries(Object.entries(st.flags || {}).filter(([kk]) => st.locks[kk] !== undefined)) : {};
     logEvent(k, keepLocks ? 'Regenerated around locked cells' : 'Generated a fresh draft');
     save(k); render(); toast(best.ev.hard ? 'Done, but some hard rules could not be met. See the list.' : 'Done. All hard rules met.');
   }, 30);
 }
 
 // ---------- persistence (Supabase) ----------
-function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, inputs: st.inputs, rnd: st.A ? packRB(E.roundingBlocks(E.prepare(buildInput(k)), st.A, B.HOLIDAYS[k] || [])) : null }; } // requests and notes live in their own tables
+function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, flags: st.flags || {}, rndEdit: st.rndEdit || {}, inputs: st.inputs, rnd: st.A ? packRB(E.roundingBlocks(E.prepare(buildInput(k)), st.A, B.HOLIDAYS[k] || [])) : null }; } // requests and notes live in their own tables
 // Rounding is worked out by admins (who can see leave dates) and saved with the month; residents draw it from the saved copy.
 function packRB(rb) { const seen = new Map(); Object.keys(rb).map(Number).sort((a, b) => a - b).forEach(d => { const r = rb[d]; if (!seen.has(r)) seen.set(r, { days: [], blocks: r.blocks, weekend: !!r.weekend, holiday: !!r.holiday }); seen.get(r).days.push(d); }); return [...seen.values()]; }
 function unpackRB(list) { const rb = {}; (list || []).forEach(x => { const r = { blocks: x.blocks, weekend: x.weekend, holiday: x.holiday }; x.days.forEach(d => rb[d] = r); }); return rb; }
@@ -118,7 +124,7 @@ function getRB(k, P) { const st = S.M[k]; if (!S.isAdmin && st.rnd) return unpac
 function adoptMonth(row) {
   const k = row.key; if (!S.M[k]) return; const st = S.M[k], d = row.data || {};
   if (d.A) st.A = d.A.map(([U, M, I]) => ({ U, M, I }));
-  ['locks', 'inputs', 'rnd'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
+  ['locks', 'inputs', 'rnd', 'flags', 'rndEdit'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
   st.status = row.status || st.status; existing.add(k);
 }
 function adoptSettings(r) { if (!r) return; if (r.rules && Object.keys(r.rules).length) S.rules = Object.assign(S.rules, r.rules); if (r.trio_swap) S.trioSwap = r.trio_swap; if (r.people && Object.keys(r.people).length) S.people = r.people; }
@@ -144,7 +150,8 @@ const roleName = () => ({ Scheduler: 'Scheduler', Chief: 'PGY-5 chief', 'Program
 function connect() {
   sb.channel('board').on('postgres_changes', { event: '*', schema: 'public', table: 'months' }, p => { if (pendingOwn || !p.new) return; applyingRemote = true; adoptMonth(p.new); applyingRemote = false; render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); }).subscribe();
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'published' }, () => { if (!S.isAdmin) loadPublished().then(pub => { render(); publishAlerts(pub); }); }).subscribe();
 }
 (CTX.months || []).forEach(adoptMonth);
 adoptSettings(CTX.settings);
@@ -157,7 +164,11 @@ if (['scheduler', 'chief'].includes(S.realRole)) Object.keys(S.M).forEach(k => {
 // roster = everyone on this year's current/upcoming monthly schedules (people who left, like a former fellow, drop off)
 const ROSTER_NAMES = () => [...new Set(KEYS.flatMap(k => Object.keys(DATA.rotations[k] || {})))].sort((x, y) => order(x) - order(y) || x.localeCompare(y));
 // ---------- requests (own table; residents only ever load their own) ----------
-const cons = k => S.requests.filter(r => r.month_key === k && r.status === 'accepted').map(r => ({ id: r.id, type: r.type, name: r.resident, days: r.days, reason: r.note, source: r.source }));
+const cons = k => S.requests.filter(r => r.month_key === k && r.status === 'accepted').map(r => ({ id: r.id, type: r.type, name: r.resident, days: r.days, reason: r.note, source: r.source, by: r.decided_by || r.created_by, at: r.decided_at || r.created_at }));
+const canDecide = () => isScheduler() || S.role === 'Program Director';
+const whoName = id => (S.names && S.names[id]) || 'someone';
+const whenTxt = t => t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+async function loadNames() { const { data } = await sb.from('profiles').select('id,display_name'); S.names = Object.fromEntries((data || []).map(p => [p.id, p.display_name])); }
 async function loadRequests() { const { data, error } = await sb.from('requests').select('*').order('created_at'); if (!error) S.requests = data || []; }
 async function loadNotes() { if (!adminView() && !S.isAdmin) return; const { data } = await sb.from('month_notes').select('*'); (data || []).forEach(r => S.notes[r.key] = r.notes_text); }
 let notesTimer = null;
@@ -174,7 +185,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3400); }
 const adminView = () => S.isAdmin && S.role !== 'Resident'; // schedulers, chiefs and the PD are admins; 'Preview as Resident' hides admin screens
 const isScheduler = () => S.role === 'Scheduler' || S.role === 'Chief'; // chiefs can do everything the PGY-4 schedulers do
-const canEdit = () => isScheduler() && !['Published', 'PD review'].includes(cur().status);
+const canEdit = () => isScheduler() && !['Published', 'PD review', 'Approved'].includes(cur().status);
 const canSwap = () => S.role === 'Scheduler' || S.role === 'Chief';
 const monthName = k => { const [y, m] = ym(k); return `${MONTHS_LONG[m - 1]} ${y}`; };
 const dateLabel = (k, d) => { const [y, m] = ym(k); return `${DOW[E.dow(y, m, d)]} ${MONTHS[m - 1]} ${d}`; };
@@ -197,7 +208,8 @@ function calendarHTML(A, k, o) {
     const chips = ['U', 'M', 'I'].map(s => {
       const n = a[s], key = d + s, est = o.est && o.est[key], lk = o.locked ? o.locked(d, s, n) : '';
       if (!n) return `<button class="chip empty" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'}>${s === 'M' ? 'two-person call' : 'no ' + SLOTNAME[s].toLowerCase()}</button>`;
-      return `<button class="chip ${s} ${est ? 'est' : ''}" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}">${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
+      const fl = o.flags && o.flags[d + '|' + s];
+      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
@@ -207,7 +219,49 @@ function calendarHTML(A, k, o) {
 }
 
 // ---------- views ----------
-function noDraft() { return `<div class="panel"><h2>${monthName(S.month)}</h2><p class="muted">No draft yet. ${isScheduler() ? 'Check the Inputs tab, then build it.' : 'The schedulers haven’t built it yet.'}</p>${isScheduler() ? '<button class="btn primary" id="fresh">Build the first draft</button>' : ''}</div>`; }
+function setRnd(ref, b, list) { const st = cur(); st.rndEdit = st.rndEdit || {}; st.rndEdit[ref] = Object.assign({}, st.rndEdit[ref], { [b]: list }); logEvent(S.month, `Rounding edit: ${dateLabel(S.month, ref)} ${b} → ${list.join(', ') || 'nobody'}`); save(); render(); }
+// why a person shouldn't be on a weekend team (shown red; still allowed)
+function rndIssue(n, rec, ref, b, recs) {
+  const P = CUR.P, p = P.byName[n.replace(' (cross-cover)', '')]; if (!p) return '';
+  const name = p.name, days = Object.keys(CUR.rb).map(Number).filter(d => CUR.rb[d] === rec);
+  if (days.some(d => p.vacAll.has(d) || (p.leaveDays || []).includes(d))) return 'away that weekend';
+  if (Object.entries(rec.blocks).some(([bb, v]) => bb !== b && v.some(m => m.replace(' (cross-cover)', '') === name))) return 'already on another team';
+  if (rec.weekend && p.lvl === 'F' && !rec.fellowWeek) return 'not the fellow’s ICU weekend (W3)';
+  if (rec.weekend && p.rotation === 'ICU' && p.lvl !== 'F' && rec.fellowWeek) return 'the fellow’s ICU weekend (W3)';
+  if ((rec.tegsOff || []).includes(name)) return 'their T/EGS off weekend (W6)';
+  const i = recs.findIndex(x => x.r === rec), nb = [recs[i - 1], recs[i + 1]].filter(x => x && x.r.weekend && rec.weekend && Math.abs(x.d - ref) === 7);
+  if (nb.some(x => x.r.workers && x.r.workers.has(name))) return 'back-to-back weekend (S7)';
+  return '';
+}
+function roundingTable(recs, recLabel, BL, k) {
+  const st = cur(), ed = canEdit() && adminView(), roster = ROSTER_NAMES().filter(n => CUR.P.byName[n] && !CUR.P.byName[n].excluded || CUR.P.byName[n] && ['Transplant'].includes(CUR.P.byName[n].rotation));
+  return `<div class="tablewrap"><table class="rtable"><thead><tr><th>Days</th>${BL.map(b => `<th>${b}</th>`).join('')}${ed ? '<th></th>' : ''}</tr></thead><tbody>${recs.map(x => { const ref = x.d, edits = (st.rndEdit || {})[ref] || {};
+    return `<tr><td>${recLabel(x)}</td>${BL.map(b => { const v = x.r.blocks[b] || [];
+      const tags = v.map((n, i) => { const why = adminView() ? rndIssue(n, x.r, ref, b, recs) : ''; return `<span class="rtag ${why ? 'bad' : ''}" title="${esc(why)}">${esc(n.replace(' (cross-cover)', '*'))}${why ? ' ⛔' : ''}${ed ? `<button class="rx" data-rx="${ref}|${b}|${i}" aria-label="Remove ${esc(n)}">✕</button>` : ''}</span>`; }).join(' ');
+      const add = ed ? `<select class="radd" data-ra="${ref}|${b}" aria-label="Add to ${b}"><option value="">+</option>${roster.filter(n => !v.some(m => m.replace(' (cross-cover)', '') === n)).map(n => { const why = rndIssue(n, x.r, ref, b, recs); return `<option value="${esc(n)}">${esc(n)}${why ? ' — ' + esc(why) : ''}</option>`; }).join('')}</select>` : '';
+      return `<td class="${edits[b] ? 'edited' : ''}">${tags || '<span class="muted">—</span>'} ${add}</td>`; }).join('')}${ed ? `<td>${Object.keys(edits).length ? `<button class="btn" data-rreset="${ref}" style="padding:1px 8px" title="Undo your edits for this weekend">Reset</button>` : ''}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>`;
+}
+// Rule check popups
+function showRuleCheck(id) {
+  const { ev, P } = CUR, k = S.month;
+  if (id[0] === 'h') { const it = ev.issues.filter(i => i.sev === 'hard')[+id.slice(1)]; if (!it) return; const rule = RULE_BY_ID[it.k] || {};
+    const name = ROSTER_NAMES().find(n => new RegExp('\\b' + n + '\\b').test(it.msg)); const days = [...it.msg.matchAll(/(?:day|Day|[A-Z][a-z]{2})\s+(\d{1,2})\b/g)].map(m => +m[1]).filter(d => d >= 1 && d <= P.nd);
+    const p = name && P.byName[name];
+    if (p) return showImprove({ t: it.msg, name, calls: ev.stats[name] ? ev.stats[name].calls : [], vac: [...p.vacAll], flag: days, note: `${rule.id || it.k} ${rule.title || ''}: ${rule.plain || ''}` });
+    return modal(`<h3 style="margin-top:0">${esc(it.msg)}</h3><p class="small"><b>${esc(rule.id || it.k)} ${esc(rule.title || '')}.</b> ${esc(rule.plain || '')}</p><p class="small muted">${esc(rule.computer || '')}</p><button class="btn" data-close>Close</button>`);
+  }
+  const kk = id.slice(1), rule = RULE_BY_ID[kk] || {}, all = improvements(ev, P, P.people.filter(p => !p.excluded));
+  const match = { F1: /target/, S1: /every-other-day/, S5: /weekend off/, F2: /weekend off/, S7: /back-to-back/, S4: /next to vacation/, S6: /Request missed/ }[kk];
+  const items = match ? all.filter(x => x.name && match.test(x.t)) : [];
+  IMPROVE = items;
+  modal(`<div class="row"><h3 style="margin:0">${esc(RULE_LABEL[kk] || kk)}</h3><span class="spacer"></span><button class="btn" data-close>Close</button></div>
+    <p class="small"><b>${esc(rule.title || '')}.</b> ${esc(rule.plain || '')}</p><p class="small muted">What the app checks: ${esc(rule.computer || '')}</p>
+    ${items.length ? `<p class="small muted">Click a name for their calendar.</p><ul class="issues">${items.map((x, i) => `<li class="soft"><button class="linkish" data-imp2="${i}">${esc(x.t)}</button></li>`).join('')}</ul>` : `<p class="small">${softDetail(kk, ev)}</p>`}`,
+    (ov, close) => ov.querySelectorAll('[data-imp2]').forEach(b => b.onclick = () => { close(); showImprove(items[+b.dataset.imp2]); }));
+}
+function noDraft() { if (!adminView()) return `<div class="panel"><h2>${monthName(S.month)}</h2><p>No schedule has been published yet. You'll get an alert here when it is. Past months are on the History tab.</p></div>`;
+  return noDraft2(); }
+function noDraft2() { return `<div class="panel"><h2>${monthName(S.month)}</h2><p class="muted">No draft yet. ${isScheduler() ? 'Check the Inputs tab, then build it.' : 'The schedulers haven’t built it yet.'}</p>${isScheduler() ? '<button class="btn primary" id="fresh">Build the first draft</button>' : ''}</div>`; }
 function viewSchedule() {
   const st = cur(); const dl = deadline(S.month);
   const banner = `<div class="deadline"><b>Requests for ${MONTHS_LONG[ym(S.month)[1] - 1]}</b><span>due ${dl.label}</span><span class="pill ${dl.days < 0 ? 'neutral' : dl.days <= 3 ? 'crit' : dl.days <= 7 ? 'warn' : 'good'}">${dl.days < 0 ? 'closed' : dl.days === 0 ? 'today' : dl.days + ' days left'}</span><span class="muted small">Late requests are best effort (S6).</span></div>`;
@@ -227,23 +281,24 @@ function viewSchedule() {
   return `${banner}
   <div class="row"><h2>${monthName(k)} call schedule</h2><span class="pill ${st.status === 'Published' ? 'good' : 'neutral'}">${esc(st.status)}</span><span class="spacer"></span>
     <button class="btn" id="pdf" ${downloads && window.jspdf ? '' : 'disabled'} title="${downloads ? '' : 'Downloads aren’t available in this view'}">Download PDF</button>
-    <button class="btn" id="regen" ${canEdit() ? '' : 'disabled'}>Regenerate around locks</button>
-    <button class="btn primary" id="fresh" ${canEdit() ? '' : 'disabled'}>Generate fresh draft</button></div>
-  ${!isScheduler() ? `<div class="banner">${S.role === 'Chief' ? 'PGY-5 chief' : S.role === 'Program Director' ? 'PD' : 'Resident'} view. The PGY-4 schedulers build this.${canSwap() ? ' You can approve like-for-like swaps: click a name.' : ''}${S.role === 'Chief' ? ' Enter your own call picks on the Inputs tab.' : ''}</div>` : ''}
+    ${adminView() ? `<button class="btn" id="regen" ${canEdit() ? '' : 'disabled'}>Regenerate around locks</button>
+    <button class="btn primary" id="fresh" ${canEdit() ? '' : 'disabled'}>Generate fresh draft</button>` : ''}</div>
+  ${!isScheduler() && adminView() ? `<div class="banner">${S.role === 'Program Director' ? 'PD' : 'Admin'} view. The schedulers and chiefs build this.${canSwap() ? ' You can approve like-for-like swaps: click a name.' : ''}${S.role === 'Chief' ? ' Enter your own call picks on the Inputs tab.' : ''}</div>` : ''}
   <div class="grid2">
     <div class="panel" style="padding:10px">
       <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span><span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span><span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
-      ${calendarHTML(st.A, k, { click: canEdit() || canSwap(), locked, est, rb, tags: d => (HOLNAMES[k] || {})[d] || '' })}
-      <h3 style="margin:16px 6px 6px">Weekend and holiday rounding blocks</h3>
-      <p class="small muted" style="margin:0 6px 8px">Fri, Sat and Sun callers work that weekend (H9) and round first; on a weekday holiday, that day's callers round. Empty blocks get one resident from the service. * = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
-      <div class="tablewrap"><table><thead><tr><th>Days</th>${BL.map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>${recs.map(x => `<tr><td>${recLabel(x)}</td>${BL.map(b => `<td>${esc((x.r.blocks[b] || []).join(', ').replace(/ \(cross-cover\)/g, '*'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      ${calendarHTML(st.A, k, { click: adminView() && (canEdit() || canSwap()), locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
+      <h3 style="margin:16px 6px 6px">Weekend and holiday rounding</h3>
+      <p class="small muted" style="margin:0 6px 8px">${canEdit() ? 'The app fills these in (W1–W6). Click ✕ to take someone off a team or “+” to add someone. Your edits stay through rebuilds; red means the edit breaks a rule. ' : ''}* = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
+      ${roundingTable(recs, recLabel, BL, k)}
     </div>
     <div style="display:grid;gap:14px">
-      <div class="panel"><h3>Rule check</h3><ul class="issues">
-        ${hard.length ? hard.map(i => `<li class="hard">${esc(i.msg)}</li>`).join('') : '<li class="ok">All ACGME and hard program rules (H1–H15) are met.</li>'}
+      ${adminView() ? `<div class="panel"><h3>Rule check</h3>${hard.length || softKeys.length ? '<p class="small muted">Click one for the dates and what the rule means.</p>' : ''}<ul class="issues">
+        ${st.stale ? '<li class="soft">Rules changed since the last build. Click “Regenerate around locks” to apply them.</li>' : ''}
+        ${hard.length ? hard.map((i, n) => `<li class="hard"><button class="linkish" data-rc="h${n}">${esc(i.msg)}</button></li>`).join('') : '<li class="ok">All ACGME and hard program rules are met.</li>'}
         ${estList.map(t => `<li class="hard">⚠ ${esc(t)}. Confirm it on the Inputs tab before sending to the PD.</li>`).join('')}
-        ${softKeys.map(([kk]) => `<li class="soft">${esc(RULE_LABEL[kk] || kk)}: ${softDetail(kk, ev)}</li>`).join('')}</ul></div>
-      ${holPanel}
+        ${softKeys.map(([kk]) => `<li class="soft"><button class="linkish" data-rc="s${kk}">${esc(RULE_LABEL[kk] || kk)}: ${softDetail(kk, ev)}</button></li>`).join('')}</ul></div>
+      ${holPanel}` : ''}
     </div>
   </div>`;
 }
@@ -274,8 +329,8 @@ function viewInputs() {
     return `<tr><td>${esc(n)}</td><td>${LEVEL(n)}</td>
     <td><select class="f" data-in="rotation" data-n="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} rotation">${ROTATIONS.map(r => `<option ${r === v.rotation ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
     <td><input type="text" data-in="vac" data-n="${esc(n)}" value="${esc(v.vac)}" placeholder="e.g. 7-11" ${ed ? '' : 'disabled'} aria-label="${esc(n)} vacation days"></td>
-    <td><input type="date" data-lv="leaveFrom" data-n="${esc(n)}" value="${esc(lv.leaveFrom || '')}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} leave from"></td>
-    <td><input type="date" data-lv="leaveTo" data-n="${esc(n)}" value="${esc(lv.leaveTo || '')}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} leave to"></td>
+    <td><input type="${lv.leaveFrom ? 'date' : 'text'}" onfocus="this.type='date'" onblur="if(!this.value)this.type='text'" data-lv="leaveFrom" data-n="${esc(n)}" value="${esc(lv.leaveFrom || '')}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} leave from" style="min-width:8.5em"></td>
+    <td><input type="${lv.leaveTo ? 'date' : 'text'}" onfocus="this.type='date'" onblur="if(!this.value)this.type='text'" data-lv="leaveTo" data-n="${esc(n)}" value="${esc(lv.leaveTo || '')}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} leave to" style="min-width:8.5em"></td>
     <td>${lv.leaveTo ? `<label class="row small"><input type="checkbox" data-lv="leaveConfirmed" data-n="${esc(n)}" ${lv.leaveConfirmed ? 'checked' : ''} ${ed ? '' : 'disabled'}> ${lv.leaveConfirmed ? 'yes' : '<span style="color:var(--crit)">estimate</span>'}</label>` : ''}</td>
     <td>${pick ? `<input type="text" data-in="picks" data-n="${esc(n)}" value="${esc(v.picks)}" placeholder="e.g. 4, 9, 15" ${pickEd ? '' : 'disabled'} aria-label="${esc(n)} call picks">` : ''}</td></tr>`; }).join('')}
   </tbody></table></div>
@@ -330,6 +385,16 @@ function improvements(ev, P, ppl) {
 }
 function requestMissDetail() { const st = cur(), out = []; cons(S.month).forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push({ name: c.name, day: d, type: c.type }); }); }); return out; }
 let IMPROVE = [];
+function modal(html, onWire) { const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`; document.body.appendChild(ov);
+  const close = () => { ov.remove(); document.removeEventListener('keydown', k_); }; const k_ = e => { if (e.key === 'Escape') close(); };
+  ov.onclick = e => { if (e.target === ov) close(); }; document.addEventListener('keydown', k_); ov.querySelectorAll('[data-close]').forEach(b => b.onclick = close); if (onWire) onWire(ov, close); highlightMe(ov); return ov; }
+function askRebuild(k) {
+  S.M[k].stale = true;
+  if (!(isScheduler() && !['Published', 'PD review', 'Approved'].includes(S.M[k].status))) return;
+  modal(`<h3 style="margin-top:0">Rebuild ${esc(monthName(k))} now?</h3><p class="small">The new rule only changes the schedule after a rebuild. Locked cells stay as they are.</p>
+    <div class="row" style="gap:8px"><button class="btn primary" id="rbNow">Rebuild now</button><button class="btn" data-close>Later</button></div>`,
+    (ov, close) => { ov.querySelector('#rbNow').onclick = () => { close(); S.month = k; $('#monthSel').value = k; location.hash = 'schedule'; generate(true, k); }; });
+}
 function showImprove(x) {
   const k = S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
   let cells = '<div class="mc-h">S</div><div class="mc-h">M</div><div class="mc-h">T</div><div class="mc-h">W</div><div class="mc-h">T</div><div class="mc-h">F</div><div class="mc-h">S</div>' + '<div></div>'.repeat(first);
@@ -373,20 +438,20 @@ function viewNotes() {
   return `<div class="row"><h2>Requests · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
     ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
-      <div class="row" style="margin-top:6px;gap:6px">${isScheduler() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px"><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button>` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
+      <div class="row" style="margin-top:6px;gap:6px">${canDecide() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px;flex:1">` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
   <div class="grid2"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
     <textarea id="notes">${esc(S.notes[k] || '')}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="interpret" ${sample ? '' : 'disabled'}>Interpret with Claude</button><span class="small muted">${sample ? 'Each note becomes a proposed rule below. Nothing changes until a scheduler accepts it.' : 'Claude isn’t connected.'}</span></div>
     <div style="margin-top:12px">${proposalsHTML()}</div></div>
   <div style="display:grid;gap:14px"><div class="panel"><h3>Accepted rules for ${mn}</h3>
-    ${C.length ? `<ul class="issues">${C.map(c => `<li class="ok">${esc(describe(c))}${c.source === 'resident' ? ' <span class="pill">request</span>' : ''} ${isScheduler() ? `<button class="btn" data-rm="${c.id}" style="float:right;padding:1px 8px">Remove</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}
-    ${denied.length ? `<details><summary class="small">Denied (${denied.length})</summary><ul class="issues">${denied.map(r => `<li class="small">${esc(r.resident)}: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${r.reason ? ' — ' + esc(r.reason) : ''}</li>`).join('')}</ul></details>` : ''}
+    ${C.length ? `<ul class="issues">${C.map(c => `<li class="ok">${esc(describe(c))}${c.source === 'resident' ? ' <span class="pill">request</span>' : ''}${c.source === 'pd' ? ' <span class="pill good">PD: always honored</span>' : ''} ${canDecide() ? `<button class="btn" data-rm="${c.id}" style="float:right;padding:1px 8px">Remove</button>` : ''}<div class="small muted">${c.source === 'resident' ? 'Accepted' : 'Added'} by ${esc(whoName(c.by))} · ${esc(whenTxt(c.at))}</div></li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}
+    ${denied.length ? `<details><summary class="small">Denied (${denied.length})</summary><ul class="issues">${denied.map(r => `<li class="small">${esc(r.resident)}: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${r.reason ? ' — “' + esc(r.reason) + '”' : ''}<div class="muted">Denied by ${esc(whoName(r.decided_by))} · ${esc(whenTxt(r.decided_at))}</div></li>`).join('')}</ul></details>` : ''}
     <div class="row" style="margin-top:10px"><button class="btn primary" id="applyNotes" ${canEdit() && C.length ? '' : 'disabled'}>Rebuild with these</button></div></div>
   <div class="panel small"><h3>Add a rule by hand</h3><div class="kv">
     <label for="mType">Type</label><select id="mType" class="f"><option value="off">Day off request</option><option value="want">Wants call</option><option value="block">Unavailable (firm)</option><option value="protected">Protected event (no post-call)</option><option value="colorectal">Big colorectal day</option></select>
     <label for="mName">Resident</label><select id="mName" class="f">${roster.map(n => `<option>${n}</option>`).join('')}</select>
     <label for="mDays">${mn} days</label><input id="mDays" type="text" placeholder="e.g. 11-13 or 16"><label for="mWhy">Reason</label><input id="mWhy" type="text" placeholder="optional"></div>
-    <div class="row" style="margin-top:10px"><button class="btn" id="addManual" ${isScheduler() ? '' : 'disabled'}>Add rule</button></div></div></div></div>`;
+    <div class="row" style="margin-top:10px"><button class="btn" id="addManual" ${canDecide() ? '' : 'disabled'}>Add rule</button></div>${S.role === 'Program Director' ? '<p class="small muted" style="margin-top:6px">Rules you add as PD are always honored: “off” becomes firmly unavailable and “wants call” locks them into that day.</p>' : ''}</div></div></div>`;
 }
 const RTYPES = [['off', 'Day off (best effort)'], ['want', 'Wants call'], ['block', 'Unavailable (firm: leave, away)'], ['protected', 'Exam or event (not post-call that day)']];
 const STATUS_PILL = { pending: '<span class="pill">pending</span>', accepted: '<span class="pill good">accepted</span>', denied: '<span class="pill crit">denied</span>' };
@@ -408,7 +473,7 @@ function viewRequests() {
 }
 
 function describe(c) { const mo = MONTHS[ym(S.month)[1] - 1]; const days = c.days.map(d => mo + ' ' + d).join(', '); const t = { off: 'off (best effort, S6)', want: 'wants call (best effort)', block: 'unavailable (firm)', protected: 'protected: not post-call (S2)', colorectal: 'big colorectal day: GS2 resident not post-call (S3)' }[c.type]; return `${c.type === 'colorectal' ? 'GS2' : c.name}: ${days} ${t}${c.reason ? ' — ' + c.reason : ''}`; }
-function proposalsHTML() { if (!S.proposals.length) return ''; return `<h3 style="margin-bottom:6px">Claude's reading</h3><ul class="issues">${S.proposals.map((c, i) => `<li class="${c.problem ? 'hard' : 'soft'}">${esc(describe(c))}${c.problem ? ` <b>— ${esc(c.problem)}</b>` : ''}<span style="float:right;display:flex;gap:6px">${c.problem || !isScheduler() ? '' : `<button class="btn" data-acc="${i}" style="padding:1px 8px">Accept</button>`}<button class="btn" data-rej="${i}" style="padding:1px 8px">Reject</button></span></li>`).join('')}</ul>`; }
+function proposalsHTML() { if (!S.proposals.length) return ''; return `<h3 style="margin-bottom:6px">Claude's reading</h3><ul class="issues">${S.proposals.map((c, i) => `<li class="${c.problem ? 'hard' : 'soft'}">${esc(describe(c))}${c.problem ? ` <b>— ${esc(c.problem)}</b>` : ''}<span style="float:right;display:flex;gap:6px">${c.problem || !canDecide() ? '' : `<button class="btn" data-acc="${i}" style="padding:1px 8px">Accept</button>`}<button class="btn" data-rej="${i}" style="padding:1px 8px">Reject</button></span></li>`).join('')}</ul>`; }
 async function interpret() {
   const st = cur(); const txt = $('#notes').value.trim(); if (!txt) return; S.notes[S.month] = txt; saveNotes(S.month);
   const [y, m] = ym(S.month); const roster = Object.entries(st.inputs).map(([n, r]) => `${n} (${LEVEL(n)}, ${r.rotation})`).join('; ');
@@ -424,12 +489,21 @@ ${txt}`;
   btn.disabled = false; btn.textContent = 'Interpret with Claude'; render();
 }
 
+const RC = window.RULES_CATALOG;
+const RULE_BY_ID = Object.fromEntries(RC.groups.flatMap(g => (g.rules || []).concat(...(g.sections || []).map(s => s.rules))).map(r => [r.id, r]));
+function ruleItem(r) { return `<li class="rule" id="rule-${r.id}"><div><b class="rid">${esc(r.id)}</b> <b>${esc(r.title)}.</b> ${esc(r.plain)}</div><div class="small muted">What the app checks: ${esc(r.computer)}</div></li>`; }
+function rulesCatalogHTML() {
+  return RC.groups.map(g => `<div class="panel" id="rg-${g.id}" style="margin-top:14px"><div class="row"><h3 style="margin:0">${esc(g.title)}</h3><span class="pill neutral">${esc(g.tier)}</span></div><p class="small muted">${esc(g.intro)}</p>
+    ${g.sections ? g.sections.map(s => `<h4 style="margin:12px 0 4px">${esc(s.title)}</h4><ul class="rules">${s.rules.map(ruleItem).join('')}</ul>`).join('') : `<ul class="rules">${g.rules.map(ruleItem).join('')}</ul>`}</div>`).join('')
+  + `<div class="panel" id="rguide" style="margin-top:14px"><h3 style="margin-top:0">How to use this app</h3>${RC.guide.map(s => `<h4 style="margin:12px 0 4px">${esc(s.title)}</h4><ol class="small" style="margin:0;padding-left:20px">${s.steps.map(t => `<li style="margin:3px 0">${esc(t)}</li>`).join('')}</ol>`).join('')}</div>`;
+}
 function viewRules() {
   const R = S.rules, t = R.targets, dis = isScheduler() ? '' : 'disabled';
   const tr = (k, label) => `<tr><td>${label}</td><td><input type="number" min="0" max="12" data-t="${k}" data-i="0" value="${t[k][0]}" ${dis} aria-label="${label} minimum"></td><td><input type="number" min="0" max="12" data-t="${k}" data-i="1" value="${t[k][1]}" ${dis} aria-label="${label} maximum"></td></tr>`;
   const p4 = Object.keys(DATA.pgy).filter(n => DATA.pgy[n] === 4);
-  return `<div class="row"><h2>Rules</h2><span class="muted small">Rules v1.3 (v1.1 PD approved Nov 5; v1.3 weekend changes pending PD sign-off). Every number here is a setting each year's schedulers can change without rebuilding the app.</span></div>
-  <div class="grid2"><div class="panel"><h3>Call targets per month (F1)</h3>
+  return `<div class="row"><h2>Rules</h2><span class="muted small">Rules ${esc(RC.version)} (v1.1 PD approved Nov 5; v1.3 changes pending PD sign-off). Settings first, then every rule in plain English, then a how-to guide.</span></div>
+  <nav class="row small" style="gap:12px;margin:-4px 0 10px"><a href="#rules" data-jump="rsettings">Settings</a>${RC.groups.map(g => `<a href="#rules" data-jump="rg-${g.id}">${esc(g.title)}</a>`).join('')}<a href="#rules" data-jump="rguide">How to use this app</a></nav>
+  <div class="grid2" id="rsettings"><div class="panel"><h3>Call targets per month (F1)</h3>
     <table style="max-width:420px"><thead><tr><th>Group</th><th>Min</th><th>Max</th></tr></thead><tbody>${tr(1, 'Interns')}${tr(2, 'PGY-2')}${tr(3, 'PGY-3')}${tr(4, 'PGY-4')}${tr(5, 'PGY-5')}${tr('F', 'Fellow')}</tbody></table>
     <h3 style="margin-top:16px">Limits</h3><div class="kv"><label for="rCap">Fellow cap (H7)</label><input id="rCap" type="number" min="0" max="10" value="${R.fellowCap}" ${dis}><label for="rQ2">Max calls in a row, every other day (H14)</label><input id="rQ2" type="number" min="1" max="6" value="${R.maxQ2Run}" ${dis}><label for="rHrs">Call length for hour estimates</label><input id="rHrs" type="number" min="12" max="36" value="${R.callHours}" ${dis}></div></div>
   <div style="display:grid;gap:14px">
@@ -437,17 +511,19 @@ function viewRules() {
       ${p4.map(n => `<label class="row"><input type="checkbox" data-ntp="${esc(n)}" ${(R.noTwoPerson || []).includes(n) ? 'checked' : ''} ${S.role === 'Chief' ? '' : 'disabled'}> ${esc(n)}</label>`).join('')}</div>
     <div class="panel small"><h3>Open question</h3><label class="row" style="align-items:flex-start;gap:8px"><input type="checkbox" id="rSS" ${R.sameServiceBlocked ? 'checked' : ''} ${dis}><span><b>Two residents on the same service never share a call day.</b> Not in the rules (H15 covers sister services only). Happened 6 times Jul–Nov.</span></label></div>
     <div class="panel small"><h3>Always on</h3><p class="muted">ACGME limits, H1–H15 (a PGY-4 never fills the mid slot), holiday trios, vacation and leave, excluded rotations (Richardson, Peds, Transplant), Fri/Sat/Sun callers work that weekend's rounding (H9). Rounding counts as a worked weekend (S5, F2, S7: avoid back-to-back weekends). Fill-in rounders rotate (cross-cover first if the service's resident worked last weekend); one resident covers HPB and Transplant, two when feasible (W2); the SICU fellow and the ICU resident alternate ICU weekends, fellow two a month; each one's off weekend is fully off, no call (W3). Locked picks and the holiday list decide whose weekend it is when they can. T/EGS residents PGY-3 and up alternate weekends, each with a lower level; off weekend fully off (W6). If an ICU partner or a T/EGS PGY-3+ partner is away, the other isn't post-call on weekdays (H16). Big colorectal days are Mon/Wed (S3).</p>
-      <button class="btn primary" id="rulesApply" ${canEdit() ? '' : 'disabled'}>Rebuild with these rules</button></div></div></div>`;
+      <button class="btn primary" id="rulesApply" ${canEdit() ? '' : 'disabled'}>Rebuild with these rules</button></div></div></div>
+  ${rulesCatalogHTML()}`;
 }
 
 function viewApproval() {
-  const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role;
+  const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role;
   let actions = '';
   if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
-  if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
+  if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back with changes</button><button class="btn" id="approveHold">Approve, send to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
+  if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Approved') actions = `<span class="small">The PD approved this. Publish when you're ready.</span><button class="btn" id="unapprove">Reopen for edits</button><button class="btn primary" id="publish">Publish</button>`;
   if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
   return `<div class="row"><h2>Approval · ${monthName(S.month)}</h2><span class="muted small">The scheduler/chief builds, the PD approves, then it goes out. Every version is kept. Swaps after publishing: a scheduler or PGY-5 chief approves (SW3).</span></div>
-  <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check the dashboard', 'PD approves or sends back', 'Shared as the calendar'][i]}</span></div>`).join('')}</div>
+  <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check Stats', 'PD approves or sends back', 'PD approved; schedulers publish', 'Residents see it'][i]}</span></div>`).join('')}</div>
   ${!adminView() ? `<p class="small muted">Where this month's schedule is in the approval process. You'll see it on the Schedule tab once it's published.</p>` : `<div class="panel"><div class="row">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
   <div class="grid2"><div class="panel"><h3>Versions</h3>${st.versions.length ? `<div class="tablewrap"><table><thead><tr><th>Version</th><th>Saved</th><th>Status</th><th class="n">Changed days</th><th></th></tr></thead><tbody>${st.versions.slice().reverse().map(v => `<tr><td>v${v.n}</td><td>${new Date(v.at).toLocaleString()}</td><td>${esc(v.status)}</td><td class="n">${v.changed == null ? '—' : v.changed}</td><td>${canEdit() ? `<button class="btn" data-restore="${v.n}" style="padding:1px 8px">Restore</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No saved versions yet.</p>'}</div>
   <div class="panel"><h3>Activity</h3><ul class="issues">${st.log.slice(-14).reverse().map(l => `<li class="ok small"><b>${esc(l.role)}</b> ${esc(l.text)} <span class="muted">· ${new Date(l.at).toLocaleString()}</span></li>`).join('') || '<li class="ok small">No activity yet.</li>'}</ul></div></div>`}`;
@@ -505,7 +581,7 @@ function openDrawer(d, s) {
       return { p, why, n: CUR.ev.stats[p.name] ? CUR.ev.stats[p.name].n : 0 };
     }).sort((x, y) => (!!x.why - !!y.why) || x.n - y.n);
     const fs = [5, 6].includes(E.dow(...ym(k), d)), nt = (S.rules.noTwoPerson || []).includes(a.U), p4 = DATA.pgy[a.U] === 4;
-    replaceHTML = `<h3>Replace</h3><p class="small muted">Greyed names are unavailable that day; the rule check catches anything else.</p><div style="display:grid;gap:6px">${cands.map(c => `<button class="opt ${c.p.name === curN ? 'cur' : ''}" data-pick="${esc(c.p.name)}" ${c.why || hol ? 'disabled' : ''}><span>${esc(c.p.name)} <span class="why">${LEVEL(c.p.name)} · ${esc(c.p.rotation)}</span></span><span class="why">${c.why ? esc(c.why) : c.n + ' calls'}</span></button>`).join('')}
+    replaceHTML = `<h3>Replace</h3><p class="small muted">Names in red break a rule that day. You can still pick them; the cell turns red so it's obvious. The rule check catches anything else.</p><div style="display:grid;gap:6px">${cands.map(c => `<button class="opt ${c.p.name === curN ? 'cur' : ''}" data-pick="${esc(c.p.name)}" data-why="${esc(c.why)}" ${hol ? 'disabled' : ''} style="${c.why ? 'border-color:var(--crit);background:var(--crit-bg)' : ''}"><span>${esc(c.p.name)} <span class="why">${LEVEL(c.p.name)} · ${esc(c.p.rotation)}</span></span><span class="why">${c.why ? esc(c.why) : c.n + ' calls'}</span></button>`).join('')}
     ${s === 'M' && !hol ? `<button class="opt" data-pick="" ${fs || nt || !p4 ? 'disabled' : ''}><span>Make it two-person call</span><span class="why">${fs ? 'not on Fri/Sat (H4)' : !p4 ? 'needs a PGY-4 upper level' : nt ? a.U + ' not eligible (H3)' : 'PGY-4 + intern'}</span></button>` : ''}</div>
     <label class="row small"><input type="checkbox" id="dLock" ${st.locks[d + '|' + s] !== undefined ? 'checked' : ''} ${hol ? 'disabled' : ''}> Lock this cell so rebuilding keeps it</label>`;
   }
@@ -523,8 +599,8 @@ function openDrawer(d, s) {
     <p class="small">Now: <b>${esc(curN || (s === 'M' ? 'two-person call' : 'empty'))}</b>${CUR.est[d + s] ? ` <span style="color:var(--crit)">⚠ ${esc(CUR.est[d + s])}</span>` : ''}</p>${replaceHTML}${swapHTML}`;
   $('#drawer').classList.add('open');
   $('#dClose').onclick = () => $('#drawer').classList.remove('open');
-  $('#drawer').querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { const v = b.dataset.pick || null; st.A[d - 1][s] = v; st.locks[d + '|' + s] = v; logEvent(k, `Set ${dateLabel(k, d)} ${SLOTNAME[s].toLowerCase()} to ${v || 'two-person call'}`); save(); $('#drawer').classList.remove('open'); render(); });
-  $('#drawer').querySelectorAll('[data-swap]').forEach(b => b.onclick = () => { const d2 = +b.dataset.swap, other = st.A[d2 - 1][s]; st.A[d2 - 1][s] = curN; st.A[d - 1][s] = other; st.locks[d + '|' + s] = other; st.locks[d2 + '|' + s] = curN; logEvent(k, `Swap approved: ${curN} ${dateLabel(k, d)} ⇄ ${other} ${dateLabel(k, d2)}`); if (st.status === 'Published') saveVersion('Revised (swap)'); save(); $('#drawer').classList.remove('open'); render(); toast('Swap done and logged.'); });
+  $('#drawer').querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { const v = b.dataset.pick || null; st.A[d - 1][s] = v; st.locks[d + '|' + s] = v; st.flags = st.flags || {}; if (b.dataset.why) st.flags[d + '|' + s] = b.dataset.why; else delete st.flags[d + '|' + s]; logEvent(k, `Set ${dateLabel(k, d)} ${SLOTNAME[s].toLowerCase()} to ${v || 'two-person call'}`); save(); $('#drawer').classList.remove('open'); render(); });
+  $('#drawer').querySelectorAll('[data-swap]').forEach(b => b.onclick = () => { const d2 = +b.dataset.swap, other = st.A[d2 - 1][s]; st.A[d2 - 1][s] = curN; st.A[d - 1][s] = other; if (st.flags) { delete st.flags[d + '|' + s]; delete st.flags[d2 + '|' + s]; } st.locks[d + '|' + s] = other; st.locks[d2 + '|' + s] = curN; logEvent(k, `Swap approved: ${curN} ${dateLabel(k, d)} ⇄ ${other} ${dateLabel(k, d2)}`); if (st.status === 'Published') saveVersion('Revised (swap)'); save(); $('#drawer').classList.remove('open'); render(); toast('Swap done and logged.'); });
   const lk = $('#dLock'); if (lk) lk.onchange = e => { if (e.target.checked) st.locks[d + '|' + s] = st.A[d - 1][s]; else delete st.locks[d + '|' + s]; save(); render(); };
 }
 
@@ -648,6 +724,11 @@ function wire() {
   const st = cur(), k = S.month;
   wirePeople();
   const on = (sel, f) => { const el = $(sel); if (el) el.onclick = f; };
+  document.querySelectorAll('[data-jump]').forEach(el => el.onclick = e => { e.preventDefault(); const t = document.getElementById(el.dataset.jump); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  document.querySelectorAll('[data-rc]').forEach(el => el.onclick = () => showRuleCheck(el.dataset.rc));
+  document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
+  document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
+  document.querySelectorAll('[data-rreset]').forEach(el => el.onclick = () => { const st2 = cur(); delete st2.rndEdit[el.dataset.rreset]; logEvent(S.month, 'Reset rounding edits'); save(); render(); });
   document.querySelectorAll('[data-imp]').forEach(el => el.onclick = () => showImprove(IMPROVE[+el.dataset.imp]));
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
   on('#swapX', () => { S.trioSwap.xmas = !S.trioSwap.xmas; logEvent(k, 'Swapped which Christmas trio starts'); generate(true); });
@@ -660,7 +741,7 @@ function wire() {
   on('#inputsApply', () => { location.hash = 'schedule'; generate(true); });
   on('#interpret', interpret);
   const notes = $('#notes'); if (notes) notes.oninput = () => { S.notes[k] = notes.value; saveNotes(k); };
-  document.querySelectorAll('[data-qacc]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qacc); await setRequest(r.id, { status: 'accepted', decided_by: me.id, decided_at: new Date().toISOString(), reason: '' }); logEvent(k, `Accepted ${r.resident}'s request`); render(); });
+  document.querySelectorAll('[data-qacc]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qacc); await setRequest(r.id, { status: 'accepted', decided_by: me.id, decided_at: new Date().toISOString(), reason: '' }); logEvent(k, `Accepted ${r.resident}'s request`); render(); askRebuild(r.month_key); });
   document.querySelectorAll('[data-qden]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qden); const why = (document.querySelector(`[data-qwhy="${r.id}"]`) || {}).value || ''; await setRequest(r.id, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), reason: why.trim() }); logEvent(k, `Denied ${r.resident}'s request`); render(); });
   document.querySelectorAll('[data-qwd]').forEach(b => b.onclick = async () => { await dropRequest(+b.dataset.qwd); render(); });
   on('#qSend', async () => { const mk = $('#qMonth').value, days = parseDays($('#qDays').value, ndays(mk)); if (!days.length) return toast('Add the day numbers, e.g. 11-13.');
@@ -672,11 +753,11 @@ function wire() {
       if (r.type) $('#qType').value = r.type; if (Array.isArray(r.days)) $('#qDays').value = r.days.filter(d => d >= 1 && d <= ndays(mk)).join(', '); if (r.note || r.reason) $('#qNote').value = r.note || r.reason; toast(`Filled in for ${who}. Check it, then send.`); }
     catch (e) { toast('Claude couldn’t read that: ' + ((e && e.message) || 'error')); }
     btn.disabled = false; btn.textContent = 'Fill in with Claude'; });
-  document.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason || '', status: 'accepted', source: 'claude', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
+  document.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason || '', status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'claude', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); askRebuild(k); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
   document.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => { S.proposals.splice(+b.dataset.rej, 1); render(); });
   document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { const c = cons(k).find(x => x.id === +b.dataset.rm); if (!c) return; if (c.source === 'resident') await setRequest(c.id, { status: 'denied', reason: 'Removed by a scheduler', decided_by: me.id, decided_at: new Date().toISOString() }); else await dropRequest(c.id); logEvent(k, 'Removed rule: ' + describe(c)); save(); render(); });
   on('#applyNotes', () => { location.hash = 'schedule'; generate(true); });
-  on('#addManual', async () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason, status: 'accepted', source: 'admin', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); });
+  on('#addManual', async () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason, status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'admin', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); askRebuild(k); });
   document.querySelectorAll('[data-t]').forEach(i => i.onchange = () => { S.rules.targets[i.dataset.t][+i.dataset.i] = Math.max(0, +i.value || 0); save(); });
   const num = (id, kk) => { const el = $(id); if (el) el.onchange = () => { S.rules[kk] = +el.value; save(); }; };
   num('#rCap', 'fellowCap'); num('#rQ2', 'maxQ2Run'); num('#rHrs', 'callHours');
@@ -685,6 +766,9 @@ function wire() {
   on('#rulesApply', () => { logEvent(k, 'Changed rule settings'); location.hash = 'schedule'; generate(true); });
   on('#saveVer', () => { saveVersion(st.status); logEvent(k, 'Saved a version'); save(); render(); toast('Version saved.'); });
   on('#toPD', () => { const ev = CUR.ev; const hard = ev.issues.filter(i => i.sev === 'hard').length; const est = Object.keys(CUR.est).length; if (hard) return toast(`Fix the ${hard} hard-rule break(s) first.`); if (est && !confirmInline()) return; st.status = 'PD review'; saveVersion('Sent to PD'); logEvent(k, 'Sent to the PD for approval' + (est ? ` with ${est} call(s) on unconfirmed dates` : '')); save(); render(); });
+  on('#approveHold', () => { st.status = 'Approved'; saveVersion('Approved'); logEvent(k, 'PD approved; sent to schedulers to publish' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
+  on('#publish', () => { st.status = 'Published'; saveVersion('Published'); logEvent(k, 'Published'); save(); render(); toast('Published. Residents see it now.'); });
+  on('#unapprove', () => { st.status = 'Scheduler review'; logEvent(k, 'Reopened after PD approval (needs PD review again)'); save(); render(); });
   on('#approve', () => { st.status = 'Published'; saveVersion('Approved'); logEvent(k, 'Approved and published' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
   on('#sendBack', () => { st.status = 'Scheduler review'; logEvent(k, 'Sent back' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
   on('#revise', () => { st.status = 'Scheduler review'; logEvent(k, 'Started a revised version'); save(); render(); });
@@ -694,11 +778,41 @@ function wire() {
 let estConfirmArmed = false;
 function confirmInline() { if (estConfirmArmed) { estConfirmArmed = false; return true; } estConfirmArmed = true; toast('Some calls depend on unconfirmed dates (⚠). Click Send again to send anyway.'); setTimeout(() => estConfirmArmed = false, 6000); return false; }
 const rs = $('#roleSel'); if (rs) { rs.value = S.role; rs.onchange = e => { S.role = e.target.value; render(); }; }
-$('#monthSel').innerHTML = KEYS.map(k => `<option value="${k}">${monthName(k)}</option>`).join('');
+function fillMonths() { const ks = S.isAdmin ? KEYS : KEYS.filter(k => S.M[k].A); $('#monthSel').innerHTML = (ks.length ? ks : [S.month]).map(k => `<option value="${k}" ${k === S.month ? 'selected' : ''}>${monthName(k)}</option>`).join(''); }
+fillMonths();
 $('#monthSel').onchange = e => { S.month = e.target.value; S.proposals = []; render(); };
 window.addEventListener('hashchange', () => { $('#drawer').classList.remove('open'); render(); });
+// Residents only ever see published schedules (current and past). Drafts never reach their browser.
+async function loadPublished() {
+  KEYS.forEach(k => { const st = S.M[k]; st.A = null; st.rnd = null; st.status = 'Draft'; });
+  const [{ data: pub }, { data: stat }] = await Promise.all([sb.from('published').select('*'), sb.from('month_status').select('*')]);
+  (stat || []).forEach(r => { if (S.M[r.key]) S.M[r.key].status = r.status; });
+  (pub || []).forEach(r => { const st = S.M[r.month_key]; if (!st) return; st.A = r.schedule.map(([U, M, I]) => ({ U, M, I })); st.rnd = r.rnd; st.pubVersion = r.version; st.publishedAt = r.published_at; });
+  const today = new Date(), curKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+  const have = KEYS.filter(k => S.M[k].A); S.month = have.includes(curKey) ? curKey : have.find(k => k > curKey) || have.at(-1) || S.month; fillMonths();
+  return pub || [];
+}
+// "New schedule" and "your schedule changed" alerts, once per published version
+function myBits(schedule, rnd, k) { const n = MY_NAME, out = new Set(); if (!n) return out;
+  (schedule || []).forEach((a, i) => { if (a.includes(n)) out.add(`call ${MONTHS[ym(k)[1] - 1]} ${i + 1}`); });
+  (rnd || []).forEach(x => Object.entries(x.blocks || {}).forEach(([b, v]) => { if (v.some(m => m.replace(' (cross-cover)', '') === n)) out.add(`${b} rounding ${MONTHS[ym(k)[1] - 1]} ${x.days.filter(d => !x.weekend || E.dow(...ym(k), d) !== 5).join('–')}`); }));
+  return out; }
+async function publishAlerts(pub) {
+  if (S.isAdmin || !pub.length) return;
+  const { data: seen } = await sb.from('seen_versions').select('*'); const sv = Object.fromEntries((seen || []).map(r => [r.month_key, r.version]));
+  const msgs = [];
+  for (const r of pub) { const k = r.month_key, was = sv[k]; if (was === r.version) continue;
+    if (was == null) msgs.push(`📅 The ${monthName(k)} schedule is out.`);
+    else { const { data: old } = await sb.from('published_history').select('schedule,rnd').eq('month_key', k).eq('version', was).maybeSingle();
+      const before = myBits(old && old.schedule, old && old.rnd, k), after = myBits(r.schedule, r.rnd, k);
+      const added = [...after].filter(x => !before.has(x)), removed = [...before].filter(x => !after.has(x));
+      if (added.length || removed.length) msgs.push(`✏️ Your ${monthName(k)} schedule changed.${added.length ? ' Added: ' + added.join(', ') + '.' : ''}${removed.length ? ' Removed: ' + removed.join(', ') + '.' : ''}`); }
+    await sb.from('seen_versions').upsert({ user_id: me.id, month_key: k, version: r.version, seen_at: new Date().toISOString() }); }
+  if (msgs.length) modal(`<h3 style="margin-top:0">Since you last signed in</h3><ul class="issues">${msgs.map(m => `<li class="ok">${esc(m)}</li>`).join('')}</ul><button class="btn primary" data-close>Got it</button>`);
+}
+if (!S.isAdmin) { KEYS.forEach(k => { S.M[k].A = null; }); }
 render();
-Promise.all([loadRequests(), loadNotes()]).then(render);
+Promise.all([loadRequests(), loadNotes(), loadNames(), S.isAdmin ? Promise.resolve(null) : loadPublished()]).then(([, , , pub]) => { render(); if (pub) publishAlerts(pub); });
 connect();
 window.__schedRender = render;
 };

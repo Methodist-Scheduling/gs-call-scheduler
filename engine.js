@@ -242,6 +242,10 @@
     // start the fellow's alternation on weekend 2 if she worked the last weekend of the previous month (S7)
     const ff = (P.weekends[0] || [])[0];
     const fStart = fellow && ff && ((P.input.prior || {})[fellow.name] || []).some(d => d >= ff - 7 && d <= ff - 5) ? 1 : 0;
+    // manual rounding edits from the Schedule tab win over the computed blocks: { [Sat or holiday day]: { block: [names] } }
+    const OVR = P.input.rndOverride || {};
+    const applyOvr = (rec, ref) => { const o = OVR[ref]; if (!o) return rec; Object.entries(o).forEach(([b, v]) => { if (Array.isArray(v)) rec.blocks[b] = v.slice(); });
+      rec.workers = new Set(rec.callers.concat(...Object.values(rec.blocks).map(v => v.map(n => n.replace(' (cross-cover)', ''))))); rec.edited = Object.keys(o); return rec; };
     const fills = {}; // how often each person was pulled in to round (rotates the fill-in)
     let wkIdx = 0, prevWorkers = new Set(ff ? Object.entries(P.input.prior || {}).filter(([, ds]) => ds.some(d => d >= ff - 7 && d <= ff - 5)).map(([nm]) => nm) : []); // last weekend of the previous month (calls)
     // callDays: days whose callers work this block; refDay: availability check
@@ -312,12 +316,12 @@
       const days = w.days;
       const fw = FW.has(i);
       const tUp = tUppers.length >= 2 ? tOn(i, tOff) : null;
-      const rec = build(days, w.ref, prevWorkers, fw, false, tUp);
+      const rec = applyOvr(build(days, w.ref, prevWorkers, fw, false, tUp), w.ref);
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
     void fellowRounds;
-    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = build([d], d, new Set(), false, true); rec.holiday = true; out[d] = rec; });
+    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = applyOvr(build([d], d, new Set(), false, true), d); rec.holiday = true; out[d] = rec; });
     return out;
   }
 
