@@ -971,7 +971,7 @@ function highlightMe(root) {
   root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
 }
 const ADMIN_TABS = ['inputs', 'dashboard', 'rules', 'people'];
-const TAB_ORDER = { default: ['schedule', 'notes', 'approval', 'inputs', 'dashboard', 'history', 'rules', 'people'], 'Program Director': ['schedule', 'approval', 'notes', 'dashboard', 'inputs', 'history', 'rules', 'people'] };
+const TAB_ORDER = { default: ['schedule', 'notes', 'inputs', 'approval', 'dashboard', 'history', 'rules', 'people'], 'Program Director': ['schedule', 'approval', 'notes', 'dashboard', 'inputs', 'history', 'rules', 'people'] };
 function orderTabs() { const nav = document.querySelector('nav.tabs'); if (!nav) return; (TAB_ORDER[S.role] || TAB_ORDER.default).forEach(t => { const el = nav.querySelector(`a[href="#${t}"]`); if (el) nav.appendChild(el); }); }
 function render() {
   let r = route(); orderTabs();
