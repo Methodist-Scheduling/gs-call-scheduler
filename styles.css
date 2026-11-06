@@ -154,3 +154,10 @@ mark.me { white-space: nowrap; display: inline-block; line-height: 1.2; backgrou
 ul.rules { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 8px; }
 li.rule { padding: 6px 8px; border-left: 3px solid var(--line, #ddd); }
 li.rule .rid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted, #666); }
+
+/* approval actions: tidy row, wraps cleanly; preview buttons are inert */
+.row.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.row.actions > input { flex: 1 1 220px; min-width: 200px; margin: 0; }
+.row.actions > .btn { margin: 0; white-space: nowrap; }
+.row.actions.preview .btn:not(#copyTxt) { opacity: .45; pointer-events: none; }
+#toast { cursor: pointer; }

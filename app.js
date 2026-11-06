@@ -136,7 +136,9 @@ function save(k) {
     const body = S.realRole === 'pd' ? { status: st.status } : { status: st.status, data: monthData(k) }; // the PD only moves the status
     const q = existing.has(k) ? sb.from('months').update(body).eq('key', k) : sb.from('months').insert(Object.assign({ key: k }, body));
     const { error } = await q; setTimeout(() => pendingOwn--, 1500);
-    if (error) toast('Not saved: ' + (/row-level|permission/i.test(error.message) ? 'your role can’t make this change.' : error.message)); else existing.add(k);
+    if (error) { toast('Not saved: ' + (/Approval step not allowed/.test(error.message) ? 'your account’s role can’t take that approval step. (Preview mode only changes the screen, not your permissions.)' : /row-level|permission/i.test(error.message) ? 'your role can’t make this change.' : error.message));
+      const { data: row } = await sb.from('months').select('*').eq('key', k).maybeSingle(); if (row) { applyingRemote = true; adoptMonth(row); applyingRemote = false; render(); } }
+    else existing.add(k);
   }, 600);
   saveSettings();
 }
@@ -182,7 +184,7 @@ const isLate = r => new Date(r.created_at) > reqDeadline(r.month_key);
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3400); }
+function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); el.onclick = () => el.classList.remove('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), Math.min(15000, 6000 + String(t).length * 60)); }
 const adminView = () => S.isAdmin && S.role !== 'Resident'; // schedulers, chiefs and the PD are admins; 'Preview as Resident' hides admin screens
 const isScheduler = () => S.role === 'Scheduler' || S.role === 'Chief'; // chiefs can do everything the PGY-4 schedulers do
 const canEdit = () => isScheduler() && !['Published', 'PD review', 'Approved'].includes(cur().status);
@@ -516,7 +518,7 @@ function viewRules() {
 }
 
 function viewApproval() {
-  const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role;
+  const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role, previewing = roleKey(S.role) !== S.realRole;
   let actions = '';
   if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
   if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back with changes</button><button class="btn" id="approveHold">Approve, send to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
@@ -524,7 +526,8 @@ function viewApproval() {
   if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
   return `<div class="row"><h2>Approval · ${monthName(S.month)}</h2><span class="muted small">The scheduler/chief builds, the PD approves, then it goes out. Every version is kept. Swaps after publishing: a scheduler or PGY-5 chief approves (SW3).</span></div>
   <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check Stats', 'PD approves or sends back', 'PD approved; schedulers publish', 'Residents see it'][i]}</span></div>`).join('')}</div>
-  ${!adminView() ? `<p class="small muted">Where this month's schedule is in the approval process. You'll see it on the Schedule tab once it's published.</p>` : `<div class="panel"><div class="row">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
+  ${previewing && adminView() ? `<div class="banner">Preview: these are the ${esc(roleName())}'s buttons, shown for reference. Only a real ${esc(roleName())} account can press them (the database checks). To test the PD steps, add a test account with the Program director role on People and sign in as it in a private window.</div>` : ''}
+  ${!adminView() ? `<p class="small muted">Where this month's schedule is in the approval process. You'll see it on the Schedule tab once it's published.</p>` : `<div class="panel"><div class="row actions ${previewing ? 'preview' : ''}">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
   <div class="grid2"><div class="panel"><h3>Versions</h3>${st.versions.length ? `<div class="tablewrap"><table><thead><tr><th>Version</th><th>Saved</th><th>Status</th><th class="n">Changed days</th><th></th></tr></thead><tbody>${st.versions.slice().reverse().map(v => `<tr><td>v${v.n}</td><td>${new Date(v.at).toLocaleString()}</td><td>${esc(v.status)}</td><td class="n">${v.changed == null ? '—' : v.changed}</td><td>${canEdit() ? `<button class="btn" data-restore="${v.n}" style="padding:1px 8px">Restore</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No saved versions yet.</p>'}</div>
   <div class="panel"><h3>Activity</h3><ul class="issues">${st.log.slice(-14).reverse().map(l => `<li class="ok small"><b>${esc(l.role)}</b> ${esc(l.text)} <span class="muted">· ${new Date(l.at).toLocaleString()}</span></li>`).join('') || '<li class="ok small">No activity yet.</li>'}</ul></div></div>`}`;
 }
