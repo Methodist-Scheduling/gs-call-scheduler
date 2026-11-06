@@ -488,7 +488,7 @@ function btDetail(m) {
   if (BTD[m]) return BTD[m];
   const k = `2026-${String(m).padStart(2, '0')}`, mn = MONTHS[m - 1], P = E.prepare(B.buildInput(DATA, 2026, m, 'backtest'));
   const one = A => { const ev = E.evaluate(P, A), st = ev.stats, ppl = P.people.filter(p => !p.excluded && st[p.name]), o = {};
-    o.hardL = ev.issues.filter(x => x.sev === 'hard').map(x => x.msg.replace(/Day (\d+)/g, (_, d) => `${mn} ${d}`));
+    o.hardL = ev.issues.filter(x => x.sev === 'hard').map(x => x.msg.replace(/[Dd]ay (\d+)/g, (_, d) => `${mn} ${d}`));
     o.q2L = []; ppl.forEach(p => { const c = st[p.name].calls; c.filter(d => c.includes(d + 2)).forEach(d => o.q2L.push(`${p.name}: ${mn} ${d} → ${d + 2}`)); });
     o.bookL = []; ppl.forEach(p => { const c = st[p.name].calls, vd = [...p.vacAll].filter(d => { const w = P.days[d - 1] && P.days[d - 1].w; return w >= 1 && w <= 5; }).sort((a, b) => a - b); if (!vd.length) return;
       const f = vd[0], l = vd.at(-1); [f - 3, f - 2, f - 1].filter(d => c.includes(d)).slice(0, 1).forEach(d => o.bookL.push(`${p.name}: call ${mn} ${d}, right before vacation (${mn} ${f}–${l})`));
