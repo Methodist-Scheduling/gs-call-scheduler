@@ -217,7 +217,7 @@ function calendarHTML(A, k, o) {
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
-    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
+    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num"><span class="wd">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][E.dow(...ym(k), d)]} </span>${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
   });
   return `<div class="cal">${h}</div>`;
 }
@@ -274,7 +274,7 @@ function viewSchedule() {
   const hard = ev.issues.filter(i => i.sev === 'hard');
   const softKeys = Object.entries(ev.br).filter(([kk]) => /^(S|F)/.test(kk));
   const picked = new Set(picksOf(k).map(p => p.day + '|' + p.name));
-  const locked = (d, s, n) => isHolidayLock(k, d) ? 'holiday' : st.locks[d + '|' + s] !== undefined ? 'locked' : picked.has(d + '|' + n) ? 'picked' : (s === 'U' && n && [5, 'F'].includes(DATA.pgy[n])) ? 'proposed' : '';
+  const locked = (d, s, n) => !adminView() ? '' : isHolidayLock(k, d) ? 'holiday' : st.locks[d + '|' + s] !== undefined ? 'locked' : picked.has(d + '|' + n) ? 'picked' : (s === 'U' && n && [5, 'F'].includes(DATA.pgy[n])) ? 'proposed' : '';
   const estList = [...new Set(Object.values(est))];
   const [ky, km] = ym(k); const recs = []; Object.keys(rb).map(Number).sort((a, b) => a - b).forEach(d => { const r = rb[d]; if (recs.length && recs.at(-1).r === r) return; const w = E.dow(ky, km, d); if (r.weekend && w === 5 && rb[d + 1] === r) return; recs.push({ d, r }); });
   const recLabel = ({ d, r }) => { const ds = Object.keys(rb).map(Number).filter(x => rb[x] === r).sort((a, b) => a - b); const shown = r.weekend ? ds.filter(x => E.dow(ky, km, x) !== 5) : ds; const mo = MONTHS[km - 1]; return (shown.length > 1 ? `${mo} ${shown[0]}\u2013${shown.at(-1)}` : `${mo} ${shown[0]}`) + (r.holiday ? ' (holiday)' : (HOLNAMES[k] || {})[shown[0]] ? ' (holiday weekend)' : ''); };
@@ -290,7 +290,7 @@ function viewSchedule() {
   ${!isScheduler() && adminView() ? `<div class="banner">${S.role === 'Program Director' ? 'PD' : 'Admin'} view. The schedulers and chiefs build this.${canSwap() ? ' You can approve like-for-like swaps: click a name.' : ''}${S.role === 'Chief' ? ' Enter your own call picks on the Inputs tab.' : ''}</div>` : ''}
   <div class="grid2">
     <div class="panel" style="padding:10px">
-      <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span><span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span><span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
+      <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span>${adminView() ? '<span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span>' : ''}<span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
       ${calendarHTML(st.A, k, { click: adminView() && (canEdit() || canSwap()), own: !adminView() && st.status === 'Published' ? MY_NAME : null, locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
       <h3 style="margin:16px 6px 6px">Weekend and holiday rounding</h3>
       <p class="small muted" style="margin:0 6px 8px">${canEdit() ? 'The app fills these in (W1–W6). Click ✕ to take someone off a team or “+” to add someone. Your edits stay through rebuilds; red means the edit breaks a rule. ' : ''}* = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
