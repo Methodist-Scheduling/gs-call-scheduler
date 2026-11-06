@@ -443,6 +443,7 @@ function viewNotes() {
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
     ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
       <div class="row" style="margin-top:6px;gap:6px">${canDecide() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px;flex:1">` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
+  ${CTX.profile.can_preview ? stressPanel(k) : ''}
   ${adminSwapsHTML(k)}
   <div class="grid2" style="margin-top:14px"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
     <textarea id="notes">${esc(S.notes[k] || '')}</textarea>
@@ -618,6 +619,55 @@ function adminSwapsHTML(k) {
       ${isScheduler() ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swok="${x.id}" ${p ? 'disabled' : ''} style="padding:1px 10px">Approve</button><button class="btn" data-swden="${x.id}" style="padding:1px 10px">Deny</button><input type="text" data-swdwhy="${x.id}" placeholder="Reason (they'll see it)" style="flex:1;min-width:180px"></div>` : ''}</li>`; }).join('')}</ul>` : '<p class="small muted">Nothing waiting.</p>'}
     ${waiting.length ? `<details><summary class="small">Waiting on the other resident (${waiting.length})</summary><ul class="issues">${waiting.map(x => `<li class="small">${swapLine(x)}</li>`).join('')}</ul></details>` : ''}
     ${done.length ? `<details><summary class="small">Recent decisions</summary><ul class="issues">${done.map(x => `<li class="small">${swapLine(x)} · ${esc(x.status)} by ${esc(whoName(x.decided_by))} · ${esc(whenTxt(x.decided_at))}${x.admin_reason ? ' · “' + esc(x.admin_reason) + '”' : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
+// ---------- stress test (tester account only; everything stays in memory, nothing is saved) ----------
+function stressPanel(k) {
+  return `<div class="panel" style="margin-bottom:14px;border:1px dashed var(--line)"><h3 style="margin-top:0">Stress test · ${esc(monthName(k))} <span class="pill neutral">only you see this</span></h3>
+    <p class="small muted">Makes fake requests from random residents, accepts them all, builds ${esc(monthName(k))} around them, and reports what the generator honored. Nothing is saved: real requests and the real draft aren't touched.</p>
+    <div class="row" style="gap:8px"><label class="small" for="stN">Requests</label><input id="stN" type="number" min="5" max="80" value="25" style="width:5em"><button class="btn primary" id="stRun">Run stress test</button><span class="small muted" id="stMsg"></span></div></div>`;
+}
+function fakeRequests(k, n) {
+  const nd = ndays(k), [y, m] = ym(k), ppl = E.prepare(buildInput(k)).people.filter(p => !p.excluded && p.lvl !== 'F'), out = [];
+  const rnd = a => a[Math.floor(Math.random() * a.length)], fris = []; for (let d = 1; d <= nd - 2; d++) if (E.dow(y, m, d) === 5) fris.push(d);
+  for (let i = 0; i < n; i++) { const p = rnd(ppl), r = Math.random(); let type, days;
+    if (r < .35) { type = 'off'; const f = rnd(fris); days = [f, f + 1, f + 2]; }                       // a weekend off
+    else if (r < .6) { type = 'off'; const d = 1 + Math.floor(Math.random() * (nd - 2)); days = Math.random() < .5 ? [d] : [d, d + 1]; }
+    else if (r < .78) { type = 'want'; days = [1 + Math.floor(Math.random() * nd)]; }
+    else if (r < .9) { type = 'protected'; days = [1 + Math.floor(Math.random() * nd)]; }
+    else { type = 'block'; const d = 1 + Math.floor(Math.random() * (nd - 3)); days = [d, d + 1, d + 2]; }
+    out.push({ id: -1 - i, month_key: k, resident: p.name, type, days: days.filter(d => d >= 1 && d <= nd), note: 'stress test', status: 'accepted', source: 'resident' }); }
+  return out;
+}
+function runStress(k, n) {
+  const fakes = fakeRequests(k, n), keep = S.requests;
+  S.requests = keep.concat(fakes);                       // only for building the input below
+  let inp; try { inp = buildInput(k); } finally { S.requests = keep; }
+  let best = null; for (let i = 0; i < 2; i++) { const r = E.solve(inp, { seed: (Date.now() + i * 7919) % 100000, iters: 30000 }); if (!best || r.ev.cost < best.ev.cost) best = r; }
+  const A = best.A, ev = best.ev, on = (n, d) => { const a = A[d - 1]; return !!a && [a.U, a.M, a.I].includes(n); };
+  const lockedFor = (n, d) => (inp.locks || []).some(l => l.day === d && l.name === n), lk = (n, ds) => ds.some(d => lockedFor(n, d)) ? ' (locked: holiday list or a pick, so it wins)' : '';
+  const res = fakes.map(f => { let ok, why = '';
+    if (f.type === 'off' || f.type === 'block') { const hit = f.days.filter(d => on(f.resident, d)); ok = !hit.length; if (!ok) why = 'on call ' + hit.map(d => dateLabel(k, d)).join(', ') + lk(f.resident, hit); }
+    else if (f.type === 'want') { ok = f.days.some(d => on(f.resident, d)); if (!ok) why = 'not on call that day'; }
+    else { const hit = f.days.filter(d => d > 1 && on(f.resident, d - 1)); ok = !hit.length; if (!ok) why = 'post-call on ' + hit.map(d => dateLabel(k, d)).join(', ') + lk(f.resident, hit.map(d => d - 1)); }
+    return Object.assign({ ok, why }, f); });
+  return { res, ev, P: E.prepare(inp) };
+}
+function showStress(k, out) {
+  const { res, ev, P } = out, ok = res.filter(r => r.ok).length, st = ev.stats, ppl = P.people.filter(p => !p.excluded);
+  const firm = res.filter(r => r.type === 'block' || r.type === 'protected'), firmMiss = firm.filter(r => !r.ok).length;
+  const hard = ev.issues.filter(i => i.sev === 'hard'), b2b = ppl.filter(p => st[p.name] && st[p.name].b2b).length, noWk = ppl.filter(p => st[p.name] && st[p.name].wTot && !st[p.name].wOff).length;
+  const tgt = ppl.filter(p => st[p.name] && (st[p.name].n < p.tmin || st[p.name].n > p.tmax)).length;
+  const label = { off: 'day off', want: 'wants call', protected: 'exam/event', block: 'unavailable' };
+  modal(`<div class="row"><h3 style="margin:0">Stress test · ${esc(monthName(k))}</h3><span class="spacer"></span><button class="btn" data-close>Close</button></div>
+    <div class="kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0">
+      <div class="panel" style="padding:8px"><div class="small muted">Requests honored</div><b style="font-size:20px">${ok}/${res.length}</b> <span class="small">(${Math.round(100 * ok / res.length)}%)</span></div>
+      <div class="panel" style="padding:8px"><div class="small muted">Firm ones missed</div><b style="font-size:20px;color:${firmMiss ? 'var(--crit)' : 'inherit'}">${firmMiss}</b> <span class="small">of ${firm.length}</span></div>
+      <div class="panel" style="padding:8px"><div class="small muted">Hard-rule breaks</div><b style="font-size:20px;color:${hard.length ? 'var(--crit)' : 'inherit'}">${hard.length}</b></div></div>
+    <p class="small">Also: ${tgt} off call target · ${b2b} with back-to-back weekends · ${noWk} with no weekend off.</p>
+    ${hard.length ? `<ul class="issues">${hard.slice(0, 6).map(i => `<li class="hard small">${esc(i.msg)}</li>`).join('')}</ul>` : ''}
+    <div class="tablewrap" style="max-height:300px;overflow:auto"><table><thead><tr><th></th><th>Resident</th><th>Request</th><th>Days</th><th>Result</th></tr></thead><tbody>
+    ${res.sort((a, b) => a.ok - b.ok).map(r => `<tr><td>${r.ok ? '✅' : '❌'}</td><td>${esc(r.resident)}</td><td>${label[r.type]}</td><td>${esc(r.days.join(', '))}</td><td class="small">${r.ok ? 'honored' : esc(r.why)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted" style="margin-bottom:0">Random requests can clash with each other (two people off the same weekend) or with locked calls and holidays, so a few misses are normal. Firm ones (unavailable, exams) should almost never miss. Run it again for a new random set.</p>`);
 }
 async function approveSwap(id) {
   const x = S.swaps.find(y => y.id === id), k = x.month_key, st = S.M[k];
@@ -823,6 +873,8 @@ function wire() {
   document.querySelectorAll('[data-swwd]').forEach(b => b.onclick = () => swUpd(+b.dataset.swwd, { status: 'withdrawn' }, 'Withdrawn.'));
   document.querySelectorAll('[data-swok]').forEach(b => b.onclick = () => approveSwap(+b.dataset.swok));
   document.querySelectorAll('[data-swden]').forEach(b => b.onclick = () => swUpd(+b.dataset.swden, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), admin_reason: ((document.querySelector(`[data-swdwhy="${b.dataset.swden}"]`) || {}).value || '').trim() }, 'Denied. The requester will be told.'));
+  const stRun = $('#stRun'); if (stRun) stRun.onclick = () => { const n = Math.max(5, Math.min(80, +$('#stN').value || 25)); stRun.disabled = true; $('#stMsg').textContent = 'Building… (about 10 seconds)';
+    setTimeout(() => { try { showStress(S.month, runStress(S.month, n)); } catch (e) { toast('Stress test failed: ' + e.message); } stRun.disabled = false; $('#stMsg').textContent = ''; }, 50); };
   document.querySelectorAll('[data-qwd]').forEach(b => b.onclick = async () => { await dropRequest(+b.dataset.qwd); render(); });
   on('#qSend', async () => { const mk = $('#qMonth').value, days = parseDays($('#qDays').value, ndays(mk)); if (!days.length) return toast('Add the day numbers, e.g. 11-13.');
     const r = await addRequest({ month_key: mk, resident: CTX.profile.roster_name || MY_NAME, type: $('#qType').value, days, note: $('#qNote').value.trim(), status: 'pending', source: 'resident', created_by: me.id });
