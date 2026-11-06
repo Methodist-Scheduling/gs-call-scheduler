@@ -252,7 +252,7 @@
     // W6: PGY-3+ residents on Trauma/EGS alternate weekend T/EGS rounding; start with one who didn't work the previous month's last weekend
     const tUppers = P.people.filter(p => ['Trauma', 'EGS'].includes(p.rotation) && p.pgy >= 3 && p.lvl !== 'F' && !p.excluded).sort((a, c) => a.name < c.name ? -1 : 1);
     const tStart = Math.max(0, tUppers.findIndex(p => !prevWorkers.has(p.name)));
-    const build = (callDays, refDay, prev, fellowWeek, refHoliday, tUp) => {
+    const build = (callDays, refDay, prev, fellowWeek, refHoliday, tUp, wk) => {
       const b = {}; Object.keys(BLOCK).forEach(k => b[k] = []);
       const placed = n => Object.values(b).some(v => v.some(m => m.replace(' (cross-cover)', '') === n));
       const avail = p => !p.vacAll.has(refDay) && !(p.leaveDays || []).includes(refDay) && p.rotation !== 'Leave';
@@ -262,9 +262,21 @@
       // Holidays (and holiday weekends) work like a weekend with a fixed pool: everyone working the holiday
       // (on call that day or post-call from the night before) rounds, own service first, the rest spread across
       // the empty services. Everyone else is off: no fill-ins, no alternation.
+      // T/EGS weekend rounding always has two people (the same pair rounds Sat and Sun). Move someone from a team that
+      // has two (lowest PGY first, never the fellow); otherwise, on a normal weekend, pull in a T/EGS resident.
+      const twoT = (pull) => { const T = 'Trauma/EGS'; if (!wk || b[T].length >= 2) return;
+        const base = n => n.replace(' (cross-cover)', ''), offT = tUp ? tUppers.filter(u => u !== tUp).map(u => u.name) : [];
+        const donors = Object.keys(b).filter(k => k !== T && b[k].length >= 2).flatMap(k => b[k].map(n => ({ k, n }))).filter(x => { const p = P.byName[base(x.n)]; return p && p.lvl !== 'F' && !(tUp && base(x.n) === tUp.name); })
+          .sort((x, y) => P.byName[base(x.n)].pgy - P.byName[base(y.n)].pgy);
+        if (donors.length) { const x = donors[0]; b[x.k].splice(b[x.k].indexOf(x.n), 1); b[T].push(BLOCK[T].includes(P.byName[base(x.n)].rotation) ? base(x.n) : base(x.n) + ' (cross-cover)'); return; }
+        if (!pull) return;
+        const f = P.people.filter(p => BLOCK[T].includes(p.rotation) && avail(p) && p.lvl !== 'F' && !callers.includes(p.name) && !placed(p.name) && !offT.includes(p.name))
+          .sort((x, y) => (prev.has(x.name) - prev.has(y.name)) || x.pgy - y.pgy || ((fills[x.name] || 0) - (fills[y.name] || 0)))[0];
+        if (f) { b[T].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } };
       if (refHoliday) {
         all.forEach(n => { const p = P.byName[n]; if (!p) return; const k = p.lvl === 'F' ? 'ICU' : blockOf(p); if (k && !b[k].length) b[k].push(n); });
         all.forEach(n => { if (placed(n) || !P.byName[n]) return; const k = Object.keys(b).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
+        twoT(true);
         return { blocks: b, callers: all, workers: new Set(all) };
       }
       callers.forEach(n => { const p = P.byName[n]; if (!p) return; const k = blockOf(p); if (k && !(k === 'ICU' && fellowWeek)) b[k].push(n); });
@@ -300,6 +312,7 @@
       callers.forEach(n => { if (placed(n)) return; const k = Object.keys(b).filter(x => !(fellowWeek && x === 'ICU')).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
       // still empty and no caller to cross-cover: pull someone in even if they worked last weekend
       Object.keys(BLOCK).forEach(k => { if (!b[k].length) { const f = pick(BLOCK[k]); if (f) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } } });
+      twoT(true);
       const workers = new Set(all.concat(...Object.values(b).map(v => v.map(n => n.replace(' (cross-cover)', '')))));
       return { blocks: b, callers, workers };
     };
@@ -327,7 +340,7 @@
       const tUp = !holWk && tUppers.length >= 2 ? tOn(i, tOff) : null;
       // holiday weekend: whoever is post-call on the holiday Friday (Thursday's callers) rounds too
       const cDays = holWk && days[0] > 1 && (holidays || []).includes(days[0]) ? [days[0] - 1, ...days] : days;
-      const rec = applyOvr(build(cDays, w.ref, prevWorkers, fw, holWk, tUp), w.ref); if (holWk) rec.holiday = true;
+      const rec = applyOvr(build(cDays, w.ref, prevWorkers, fw, holWk, tUp, true), w.ref); if (holWk) rec.holiday = true;
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });

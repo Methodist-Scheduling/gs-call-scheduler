@@ -218,7 +218,18 @@ function roundLines(rb, k, d) {
 let MINE = false; try { MINE = localStorage.getItem('gs-mine') === '1'; } catch (e) {}
 function calendarHTML(A, k, o) {
   const [y, m] = ym(k), first = E.dow(y, m, 1); let h = o.mine ? '' : DOW.map(d => `<div class="hd">${d}</div>`).join('');
-  if (!o.mine) for (let i = 0; i < first; i++) h += '<div class="day blank"></div>';
+  // spill-over days from the months before/after so every box is filled; the previous month is read-only,
+  // the next month's days can be edited (clicking jumps to that month)
+  const adjKey = dlt => { const dt = new Date(y, m - 1 + dlt, 1); return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`; };
+  const adjDay = (k2, d, edit) => {
+    const [y2, m2] = ym(k2), w = E.dow(y2, m2, d), wk = w === 0 || w === 6 || w === 5, st2 = S.M[k2];
+    let trio = st2 && st2.A && st2.A[d - 1] ? [['U', st2.A[d - 1].U], ['M', st2.A[d - 1].M], ['I', st2.A[d - 1].I]] : null;
+    if (!trio && DATA.history[k2]) { const x = DATA.history[k2].find(r => r.d === d); if (x) trio = x.call.map(n => [DATA.pgy[n] === 1 ? 'I' : [2, 3].includes(DATA.pgy[n]) ? 'M' : 'U', n]); }
+    const can = edit && o.click && st2 && st2.A;
+    const chips = (trio || []).map(([sl, n]) => n ? `<button class="chip ${sl}" data-k="${k2}" data-d="${d}" data-s="${sl}" ${can ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)} · ${esc(monthName(k2))}${can ? ' (click to edit there)' : ''}">${esc(n)}</button>` : (sl === 'M' ? `<button class="chip empty" data-k="${k2}" data-d="${d}" data-s="M" ${can ? '' : 'disabled'}>two-person call</button>` : '')).join('');
+    const tag = (HOLNAMES[k2] || {})[d] || '';
+    return `<div class="day adj ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${MONTHS[m2 - 1]} ${d}</span><span class="tag">${esc(tag)}</span></div>${chips}</div>`; };
+  if (!o.mine) { const pk = adjKey(-1), pn = new Date(y, m - 1, 0).getDate(); for (let i = 0; i < first; i++) h += adjDay(pk, pn - first + 1 + i, false); }
   A.forEach((a, i) => {
     const d = i + 1, w = E.dow(y, m, d), wk = w === 0 || w === 6 || w === 5;
     const chips = ['U', 'M', 'I'].map(s => {
@@ -232,6 +243,7 @@ function calendarHTML(A, k, o) {
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
     h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num"><span class="wd">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][E.dow(...ym(k), d)]} </span>${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
   });
+  if (!o.mine) { const last = E.dow(y, m, A.length), nk = adjKey(1); for (let i = 1; i <= 6 - last; i++) h += adjDay(nk, i, true); }
   if (o.mine && !h) return `<div class="panel small">You're not on call or rounding in ${esc(monthName(k))}.</div>`;
   return `<div class="cal ${o.mine ? 'list' : ''}">${h}</div>`;
 }
@@ -911,7 +923,7 @@ function wire() {
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
   on('#swapX', () => { S.trioSwap.xmas = !S.trioSwap.xmas; logEvent(k, 'Swapped which Christmas trio starts'); generate(true); });
   on('#swapN', () => { S.trioSwap.ny = !S.trioSwap.ny; logEvent(k, 'Swapped which New Year trio starts (January follows)'); generate(true); });
-  document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => adminView() ? openDrawer(+b.dataset.d, b.dataset.s) : openSwapAsk(+b.dataset.d, b.dataset.s));
+  document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => b.dataset.k && b.dataset.k !== S.month ? (() => { S.month = b.dataset.k; $('#monthSel').value = S.month; S.proposals = []; render(); openDrawer(+b.dataset.d, b.dataset.s); toast(`Switched to ${monthName(S.month)} to edit.`); })() : adminView() ? openDrawer(+b.dataset.d, b.dataset.s) : openSwapAsk(+b.dataset.d, b.dataset.s));
   document.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { S.histMonth = b.dataset.hm; render(); });
   document.querySelectorAll('[data-hv]').forEach(b => b.onclick = () => { S.histView = b.dataset.hv; render(); });
   document.querySelectorAll('[data-in]').forEach(i => i.onchange = () => { st.inputs[i.dataset.n][i.dataset.in] = i.value.trim(); logEvent(k, `Input: ${i.dataset.n} ${i.dataset.in} = ${i.value.trim() || '(none)'}`); save(); });
