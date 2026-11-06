@@ -905,11 +905,12 @@ function viewPeople() {
   const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'Chief (PGY-5)'], ['pd', 'Program director'], ['resident', 'Resident']];
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
-  <div class="panel"><div class="tablewrap"><table class="ptable"><thead><tr><th>Person</th><th>Roster name</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
+  <div class="panel"><div class="tablewrap"><table class="ptable"><thead><tr><th>Person</th><th>Roster name</th><th>Role</th><th>Admin</th><th>Active</th><th title="Signs in to a private practice copy only; can't touch real data">Practice only</th><th></th></tr></thead><tbody>
   ${PEOPLE.map(p => `<tr><td><b>${esc(p.display_name)}</b><div class="small muted">${p.username ? '@' + esc(p.username) : 'username not picked yet'} · ${/@no-email\.example\.com$/.test(p.email || '') ? 'no email' : esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</div></td><td><select class="f" data-proster="${p.id}" aria-label="Roster name for ${esc(p.display_name)}"><option value="">—</option>${ROSTER_NAMES().map(n => `<option ${n === p.roster_name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
     <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id || p.role !== 'resident' ? 'disabled' : ''} aria-label="Admin" title="${p.role !== 'resident' ? 'Schedulers, chiefs and the PD are always admins' : ''}"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
+    <td><input type="checkbox" data-pprac="${p.id}" ${p.practice_only ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Practice only" title="Signs in to a private practice copy with a walkthrough. Can't touch real data."></td>
     <td style="white-space:nowrap"><button class="btn" data-plink="${p.id}" style="padding:1px 8px">${p.confirmed ? 'Reset link' : 'Setup link'}</button> ${p.id === me.id ? '' : `<button class="btn" data-pdel="${p.id}" style="padding:1px 8px;color:var(--crit)">Delete</button>`}</td></tr>`).join('')}
   </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the account (best for someone on leave). Delete removes the account for good; their past schedules, requests and log entries stay. You can't change or delete your own account, so nobody locks themselves out.</p></div>
   <div class="panel" style="margin-top:14px;max-width:640px"><h3>Add a person</h3><div class="kv small addform">
@@ -917,7 +918,8 @@ function viewPeople() {
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="optional if you copy the link instead">
     <label for="nRoster">Roster name</label><select id="nRoster" class="f"><option value="">— (PD or not on the call roster)</option>${ROSTER_NAMES().map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-    <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox" style="justify-self:start;width:auto;margin:0"></div>
+    <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox" style="justify-self:start;width:auto;margin:0">
+    <label for="nPrac">Practice only</label><label class="small" style="display:flex;gap:8px;align-items:center;margin:0;white-space:normal"><input id="nPrac" type="checkbox" style="width:auto;margin:0"> Signs in to a private practice copy with a walkthrough; can't touch real data</label></div>
     <label class="small checkline"><input type="checkbox" id="nSend" checked><span>Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</span></label>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="nAdd">Add person</button></div>
     <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div>
@@ -957,10 +959,11 @@ function wirePeople() {
   document.querySelectorAll('[data-proster]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.proster, roster_name: el.value || null }, 'Roster name updated.'); loadPeople(); });
   document.querySelectorAll('[data-prole]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.prole, role: el.value }, 'Role updated.'); loadPeople(); });
   document.querySelectorAll('[data-padmin]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.padmin, is_admin: el.checked }, 'Admin updated.'); loadPeople(); });
+  document.querySelectorAll('[data-pprac]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pprac, practice_only: el.checked }, el.checked ? 'Practice only: they’ll land in the practice copy.' : 'Practice only off: they now see the real app.'); loadPeople(); });
   document.querySelectorAll('[data-pactive]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pactive, active: el.checked }, el.checked ? 'Account turned back on.' : 'Account turned off.'); loadPeople(); });
   document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) showLink(d.link); });
   const add = $('#nAdd'); if (add) add.onclick = async () => {
-    const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
+    const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, practice_only: $('#nPrac').checked, send_email: $('#nSend').checked };
     if (!body.display_name) return toast('Add their name.'); if (!body.email && body.send_email) return toast('No email: uncheck “Email them the setup link” and copy the link instead.');
     const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
     if (d) { PEOPLE = null; render(); if (d.link) showLink(d.link); }

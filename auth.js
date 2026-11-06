@@ -109,6 +109,14 @@
     const ref = {}; (refQ.data || []).forEach(r => ref[r.key] = r.value);
     if (!ref.data || !ref.pre) { if (profile.is_admin) return showImport(profile); card('<p>The scheduler isn’t loaded with data yet. Ask an admin.</p>'); return; }
     auth.hidden = true; document.getElementById('shell').hidden = false;
+    // Practice mode: practice-only accounts always land here; the tester account can jump in from the header
+    let practiceRole = null; try { practiceRole = profile.practice_only ? profile.role : (profile.can_preview ? sessionStorage.getItem('gs-practice') : null); } catch (e) {}
+    const pb = document.getElementById('practiceBtn'); if (pb) { pb.hidden = !(profile.can_preview && !practiceRole);
+      pb.onclick = () => { const ov = document.createElement('div'); ov.className = 'modal-ov';
+        ov.innerHTML = `<div class="modal"><h3 style="margin-top:0">Try practice mode</h3><p class="small">A private copy with pretend residents, schedulers and PD. Nothing is saved. Pick whose walkthrough to see:</p>
+          <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" data-r="scheduler">Scheduler (PGY-4)</button><button class="btn primary" data-r="chief">Chief (PGY-5)</button><button class="btn primary" data-r="pd">Program Director</button><button class="btn" data-x>Cancel</button></div></div>`;
+        document.body.appendChild(ov); ov.onclick = e => { if (e.target === ov || e.target.dataset.x !== undefined) ov.remove(); };
+        ov.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { try { sessionStorage.setItem('gs-practice', b.dataset.r); } catch (e) {} location.hash = '#schedule'; location.reload(); }); }; }
     document.getElementById('whoName').textContent = `${profile.display_name} · ${({ scheduler: 'Scheduler', chief: 'Chief', pd: 'PD', resident: 'Resident' })[profile.role]}${profile.is_admin ? ' · admin' : ''}`;
     document.getElementById('previewWrap').hidden = !profile.can_preview; // only the tester account gets "Preview as"
     document.getElementById('peopleTab').hidden = !profile.is_admin;
@@ -118,6 +126,13 @@
     sb.auth.onAuthStateChange((evt, sess) => { if (evt === 'INITIAL_SESSION' || evt === 'TOKEN_REFRESHED') return; if (!sess || sess.user.id !== user.id) {
       const b = document.createElement('div'); b.className = 'modal-ov'; b.innerHTML = '<div class="modal"><h3 style="margin-top:0">You were signed out</h3><p class="small">This browser signed out or switched to another account in a different tab. Reload to continue.</p><button class="btn primary" id="rl">Reload</button></div>';
       document.body.appendChild(b); b.querySelector('#rl').onclick = () => { location.hash = '#schedule'; location.reload(); }; } });
+    if (practiceRole && window.GSPractice) {
+      document.getElementById('previewWrap').hidden = true;
+      document.getElementById('whoName').textContent = `${profile.display_name} · ${({ scheduler: 'Scheduler', chief: 'Chief', pd: 'PD' })[practiceRole] || practiceRole} · practice`;
+      const P = window.GSPractice.start({ realSb: sb, user, profile, ref, role: practiceRole, canLeave: !profile.practice_only });
+      window.startScheduler({ sb: P.sb, user, profile: P.profile, ref, settings: null, months: P.months, versions: P.versions, logs: P.logs });
+      return;
+    }
     window.startScheduler({ sb, user, profile, ref, settings: setQ.data, months: monQ.data || [], versions: verQ.data || [], logs: logQ.data || [] });
   }
 

@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
     const { data: who } = await admin.auth.getUser(token);
     if (!who?.user) return json({ error: 'Please sign in again.' }, 401);
     const { data: me } = await admin.from('profiles').select('*').eq('id', who.user.id).maybeSingle();
-    if (!me?.active || !me?.is_admin) return json({ error: 'Only admins can manage accounts.' }, 403);
+    if (!me?.active || !me?.is_admin || me?.practice_only) return json({ error: 'Only admins can manage accounts.' }, 403);
     const body = await req.json();
     const site = body.redirectTo || req.headers.get('origin') || Deno.env.get('SITE_URL') || '';
     const log = (text: string) => admin.from('activity_log').insert({ user_id: me.id, text: `${me.display_name} (admin): ${text}` });
@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo: site } });
         if (error) return json({ error: error.message }, 400); userId = data.user.id; link = data.properties.action_link;
       }
-      const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin, roster_name: body.roster_name ? String(body.roster_name).trim() : null });
+      const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin, practice_only: !!body.practice_only, roster_name: body.roster_name ? String(body.roster_name).trim() : null });
       if (pe) return json({ error: pe.message }, 400);
       await log(`added ${username || String(body.display_name).trim()} as ${body.role}${body.is_admin ? ' (admin)' : ''}`);
       return json({ ok: true, link });
@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
       if (body.role !== undefined) { if (!ROLES.includes(body.role)) return json({ error: 'Bad role.' }, 400); patch.role = body.role; }
       if (body.is_admin !== undefined) patch.is_admin = !!body.is_admin;
       if (body.active !== undefined) patch.active = !!body.active;
+      if (body.practice_only !== undefined) patch.practice_only = !!body.practice_only;
       if (body.display_name !== undefined) patch.display_name = String(body.display_name).trim();
       const { data: target } = await admin.from('profiles').select('username').eq('id', body.id).maybeSingle();
       const { error } = await admin.from('profiles').update(patch).eq('id', body.id);
