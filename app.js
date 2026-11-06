@@ -478,7 +478,7 @@ function viewPeople() {
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="for the password link">
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox"></div>
-    <label class="row small" style="margin-top:8px"><input type="checkbox" id="nSend" checked> Email them the set-password link (uncheck to copy the link and text it instead)</label>
+    <label class="row small" style="margin-top:8px"><input type="checkbox" id="nSend" checked> Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</label>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="nAdd">Add person</button></div>
     <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div></div>`;
 }
