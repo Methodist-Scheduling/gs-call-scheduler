@@ -122,8 +122,11 @@ input[type="number"] { width: 64px; }
 .day .rnd{margin-top:4px;padding-top:3px;border-top:1px dashed var(--line, #d5d5d5);font-size:10px;line-height:1.25;color:var(--muted, #666);word-break:break-word}
 
 /* signed-in person's own name */
-mark.me { white-space: nowrap; display: inline-block; line-height: 1.2; background: #ffd43b; color: #1a1a1a; font-weight: 700; border-radius: 3px; padding: 0 3px; box-shadow: 0 0 0 1px #e0a800; }
-.chip.has-me { box-shadow: 0 0 0 2px #e0a800; font-weight: 700; }
+mark.me { white-space: nowrap; display: inline-block; line-height: 1.2; background: var(--me-bg, var(--lv-u)); color: var(--me-fg); font-weight: 700; border-radius: 3px; padding: 0 4px; }
+:root { --me-fg: #fff; } :root[data-mylv="u"] { --me-bg: var(--lv-u); } :root[data-mylv="m"] { --me-bg: var(--lv-m); --me-fg: #1a1a1a; } :root[data-mylv="i"] { --me-bg: var(--lv-i); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --me-fg: #111; } }
+:root[data-theme="dark"] { --me-fg: #111; }
+.chip.has-me { box-shadow: 0 0 0 2px var(--me-bg, var(--lv-u)); font-weight: 700; }
 
 /* dashboard: click-to-see-dates */
 .linkish { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }

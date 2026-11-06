@@ -960,6 +960,7 @@ const MY_NAME = (() => { if (CTX.profile.roster_name) return CTX.profile.roster_
   const names = Object.keys(DATA.pgy || {}); const nick = DATA.nicknameOf || {}; return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || names.find(n => (nick[n] || '').toLowerCase() === first) || null; })();
 function highlightMe(root) {
   if (!MY_NAME || !root) return;
+  { const l = DATA.pgy[MY_NAME]; document.documentElement.dataset.mylv = l === 1 ? 'i' : (l === 2 || l === 3) ? 'm' : 'u'; } // highlight in your own level's color
   const full = String(CTX.profile.display_name || '').trim(), alts = [...new Set([full.split(/\s+/).length > 1 ? full : null, MY_NAME].filter(Boolean))].sort((x, y) => y.length - x.length);
   const re = new RegExp('\\b(?:' + alts.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')).join('|') + ')\\b');
   const skip = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'MARK']);
