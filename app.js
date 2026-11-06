@@ -390,6 +390,7 @@ function viewInputs() {
   const ppl = Object.keys(st.inputs).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
   const L = S.people;
   return `<div class="row"><h2>${monthName(k)} inputs</h2><span class="muted small">Preloaded from the yearly schedule. The monthly schedule wins when they differ, so fix anything that changed here. Schedulers edit; PGY-5s and the fellow enter their own call picks (H10).</span></div>
+  ${S.role === 'Program Director' ? attendingsPanel(k) : ''}
   <div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th>Rotation</th><th>Vacation days</th><th>Leave from</th><th>Leave to</th><th>Confirmed?</th><th>Call picks (PGY-5, fellow)</th></tr></thead><tbody>
   ${ppl.map(n => { const v = st.inputs[n], lv = L[n] || {}, pick = [5, 'F'].includes(DATA.pgy[n]); const pickEd = st.status !== 'Published' && (isScheduler() || S.role === 'Chief');
     return `<tr><td>${esc(n)}</td><td>${LEVEL(n)}</td>
@@ -402,7 +403,7 @@ function viewInputs() {
   </tbody></table></div>
   <p class="small muted">Vacation days are that month's dates (Mon–Fri block calls; weekends next to it are protected by S4). Leave dates carry across months. Unconfirmed leave dates show ⚠ on every call they affect. Call picks lock that person into the upper slot on those days.</p>
   <div class="row"><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div></div>
-  ${attendingsPanel(k)}`;
+  ${S.role === 'Program Director' ? '' : attendingsPanel(k)}`;
 }
 function order(n) { const p = DATA.pgy[n]; return p === 'F' ? -1 : 6 - p; } // fellow first, then PGY-5 down to interns
 
