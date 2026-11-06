@@ -594,10 +594,22 @@ function wirePeople() {
     const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
     if (!body.display_name) return toast('Add their name.'); if (!body.email && body.send_email) return toast('No email: uncheck “Email them the setup link” and copy the link instead.');
     const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
-    if (d) { PEOPLE = null; render(); if (d.link) setTimeout(() => showLink(d.link), 400); }
+    if (d) { PEOPLE = null; render(); if (d.link) showLink(d.link); }
   };
 }
-function showLink(link) { const o = $('#linkOut'); if (!o) return toast('Link ready; open People to copy it.'); o.innerHTML = `<b>One-time link</b> (expires in 24 h): <span>${esc(link)}</span> <button class="btn" id="cpLink" style="padding:1px 8px">Copy</button>`; $('#cpLink').onclick = () => navigator.clipboard.writeText(link).then(() => toast('Copied.'), () => toast('Copy blocked; select the link instead.')); }
+function showLink(link) {
+  const ov = document.createElement('div'); ov.className = 'modal-ov';
+  ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="One-time setup link"><div class="row"><h3 style="margin:0">One-time link</h3><span class="spacer"></span><button class="btn" id="lkClose">Close</button></div>
+    <p class="small muted" style="margin:6px 0 10px">Send this to the person, or open it yourself in a private window to set up a test account. It works once and expires in 24 hours.</p>
+    <textarea id="lkText" readonly rows="4" style="width:100%;font-size:12px;word-break:break-all">${esc(link)}</textarea>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="lkCopy">Copy link</button><span class="small muted" id="lkMsg"></span></div></div>`;
+  document.body.appendChild(ov);
+  const ta = ov.querySelector('#lkText'); ta.focus(); ta.select();
+  const close = () => { ov.remove(); document.removeEventListener('keydown', k_); }; const k_ = e => { if (e.key === 'Escape') close(); };
+  ov.onclick = e => { if (e.target === ov) close(); }; ov.querySelector('#lkClose').onclick = close; document.addEventListener('keydown', k_);
+  ov.querySelector('#lkCopy').onclick = async () => { ta.select(); let ok = false; try { await navigator.clipboard.writeText(link); ok = true; } catch (e) { try { ok = document.execCommand('copy'); } catch (e2) {} }
+    ov.querySelector('#lkMsg').textContent = ok ? 'Copied.' : 'Copy blocked here: the link is selected, press Cmd+C.'; };
+}
 
 // ---------- router ----------
 const VIEWS = { people: viewPeople, schedule: viewSchedule, inputs: viewInputs, dashboard: viewDashboard, history: viewHistory, notes: viewNotes, rules: viewRules, approval: viewApproval };

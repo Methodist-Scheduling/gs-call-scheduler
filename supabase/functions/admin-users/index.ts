@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
     if (body.action === 'link') {
       const { data: u } = await admin.auth.admin.getUserById(body.id);
       if (!u?.user?.email) return json({ error: 'No email on that account.' }, 400);
-      const type = u.user.last_sign_in_at ? 'recovery' : 'invite';
+      const type = 'recovery'; // works for anyone, set up or not (an invite link can't be re-made for an existing account); the app then asks for whatever's missing
       const { data, error } = await admin.auth.admin.generateLink({ type, email: u.user.email, options: { redirectTo: site } });
       if (error) return json({ error: error.message }, 400);
       return json({ link: data.properties.action_link });
