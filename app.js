@@ -209,6 +209,14 @@ function deadline(k) { const [y, m] = ym(k); const py = m === 1 ? y - 1 : y, pm 
 // ---------- calendar ----------
 const RABBR = { 'Trauma/EGS': 'T/EGS', ICU: 'ICU', GS1: 'GS1', GS2: 'GS2', 'Vasc/Thor': 'V/T', 'HPB/Transplant': 'HPB/Tx' };
 // Same rule as the PDF: rounding prints on Sat, Sun and holiday cells.
+const RBC = {};
+function rbFor(k) {
+  try { const st = S.M[k], A = st && st.A ? st.A : DATA.history[k] ? B.actualAssign(DATA, k) : null; if (!A) return null;
+    const sig = JSON.stringify(A) + JSON.stringify(st && st.rndEdit || {}) + (st && st.rnd ? JSON.stringify(st.rnd) : '');
+    if (RBC[k] && RBC[k].sig === sig) return RBC[k].rb;
+    const [y, m] = ym(k), P = E.prepare(st ? buildInput(k) : B.buildInput(dataWithDrafts(k), y, m, 'draft'));
+    const rb = st ? getRB(k, P) : E.roundingBlocks(P, A, B.HOLIDAYS[k] || []); RBC[k] = { sig, rb }; return rb; } catch (e) { return null; }
+}
 function roundLines(rb, k, d) {
   const [y, m] = ym(k), w = E.dow(y, m, d), rec = rb && rb[d];
   if (!rec || !(w === 6 || w === 0 || rec.holiday || (HOLNAMES[k] || {})[d])) return null;
@@ -228,15 +236,16 @@ function calendarHTML(A, k, o) {
     const can = edit && o.click && st2 && st2.A;
     const chips = (trio || []).map(([sl, n]) => n ? `<button class="chip ${sl}" data-k="${k2}" data-d="${d}" data-s="${sl}" ${can ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)} · ${esc(monthName(k2))}${can ? ' (click to edit there)' : ''}">${esc(n)}</button>` : (sl === 'M' ? `<button class="chip empty" data-k="${k2}" data-d="${d}" data-s="M" ${can ? '' : 'disabled'}>two-person call</button>` : '')).join('');
     const tag = (HOLNAMES[k2] || {})[d] || '';
-    return `<div class="day adj ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${MONTHS[m2 - 1]} ${d}</span><span class="tag">${esc(tag)}</span></div>${chips}</div>`; };
+    const rl = roundLines(rbFor(k2), k2, d);
+    return `<div class="day adj ${wk ? 'wk' : ''}"><div class="dn"><span class="num">${MONTHS[m2 - 1]} ${d}</span><span class="tag">${esc(tag)}</span></div>${chips}${rl ? `<div class="rnd">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : ''}</div>`; };
   if (!o.mine) { const pk = adjKey(-1), pn = new Date(y, m - 1, 0).getDate(); for (let i = 0; i < first; i++) h += adjDay(pk, pn - first + 1 + i, false); }
   A.forEach((a, i) => {
     const d = i + 1, w = E.dow(y, m, d), wk = w === 0 || w === 6 || w === 5;
     const chips = ['U', 'M', 'I'].map(s => {
       const n = a[s], key = d + s, est = o.est && o.est[key], lk = o.locked ? o.locked(d, s, n) : '';
       if (!n) return `<button class="chip empty" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'}>${s === 'M' ? 'two-person call' : 'no ' + SLOTNAME[s].toLowerCase()}</button>`;
-      const fl = o.flags && o.flags[d + '|' + s];
-      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${lk === 'holiday' ? ' · locked: holiday list' : lk === 'locked' ? ' · locked' : ''}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk === 'holiday' || lk === 'locked' ? '🔒' : lk}</span>` : ''}</button>`;
+      const fl = o.flags && o.flags[d + '|' + s], ch = o.changed && o.changed[d + '|' + s];
+      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${lk === 'holiday' ? ' · locked: holiday list' : lk === 'locked' ? ' · locked' : ''}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}${ch ? ' · ' + esc(ch) : ''}">${fl ? '⛔ ' : ''}${ch ? '<b class="chg">↻</b> ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk === 'holiday' || lk === 'locked' ? '🔒' : lk}</span>` : ''}</button>`;
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     if (o.mine && ![a.U, a.M, a.I].includes(o.mine) && !(rl && rl.some(t => new RegExp('\\b' + o.mine + '\\b').test(t)))) return;
@@ -457,11 +466,12 @@ function askRebuild(k) {
     (ov, close) => { ov.querySelector('#rbNow').onclick = () => { close(); S.month = k; $('#monthSel').value = k; location.hash = 'schedule'; generate(true, k); }; });
 }
 function showImprove(x) {
-  const k = x.month || S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
+  const k = x.month || S.month, RB0 = rbFor(k), [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
   let cells = '<div class="mc-h">S</div><div class="mc-h">M</div><div class="mc-h">T</div><div class="mc-h">W</div><div class="mc-h">T</div><div class="mc-h">F</div><div class="mc-h">S</div>' + '<div></div>'.repeat(first);
   for (let d = 1; d <= nd; d++) { const w = (first + d - 1) % 7, c = [];
     if (w === 0 || w === 6) c.push('wk'); if (x.vac.includes(d)) c.push('vac'); if (x.calls.includes(d)) c.push('call'); if (x.flag.includes(d)) c.push('flag');
-    cells += `<div class="mc-d ${c.join(' ')}" title="${hol[d] ? esc(hol[d]) : ''}"><span>${d}</span>${x.calls.includes(d) ? '<i>call</i>' : ''}</div>`; }
+    const rl = roundLines(RB0, k, d), rTeam = rl && x.name ? (rl.find(t => new RegExp('\\b' + x.name + '\\b').test(t)) || '').split(':')[0] : '';
+    cells += `<div class="mc-d ${c.join(' ')}" title="${hol[d] ? esc(hol[d]) : ''}${rTeam ? ' · rounds ' + esc(rTeam) : ''}"><span>${d}</span>${x.calls.includes(d) ? '<i>call</i>' : rTeam ? `<i class="rd">rounds ${esc(rTeam)}</i>` : ''}</div>`; }
   const ov = document.createElement('div'); ov.className = 'modal-ov';
   ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(x.t)}"><div class="row"><h3 style="margin:0">${esc(x.t)}</h3><span class="spacer"></span><button class="btn" id="mcClose">Close</button></div>
     <p class="small muted" style="margin:6px 0 10px">${esc(monthName(k))} · ${esc(x.name)}. ${esc(x.note || '')}</p><div class="minical">${cells}</div>
@@ -471,24 +481,35 @@ function showImprove(x) {
   ov.onclick = e => { if (e.target === ov) close(); }; ov.querySelector('#mcClose').onclick = close; document.addEventListener('keydown', esc_); ov.querySelector('#mcClose').focus();
 }
 
+let PUBH = null; // published_history rows (every published version, newest edits included)
+async function loadPubHist() { try { const { data } = await sb.from('published_history').select('month_key,version,schedule,rnd,published_at').order('month_key').order('version'); PUBH = data || []; } catch (e) { PUBH = []; } if (location.hash.slice(1) === 'history') render(); }
 function viewHistory() {
-  const k = S.histMonth, [y, m] = ym(k);
-  const actual = B.actualAssign(DATA, k); const bt = BT[m];
-  const A = adminView() && S.histView === 'engine' && bt ? bt.engineA.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null })) : actual;
-  const hist = DATA.history[k]; const hol = B.HOLIDAYS[k] || [];
-  const tags = d => { const x = hist[d - 1]; const t = []; if (hol.includes(d)) t.push('Holiday'); if (x && x.vac.length && S.histView === 'actual') t.push('Vac: ' + x.vac.join(', ')); return t.join(' · '); };
-  const row = (label, f) => `<tr><td>${label}</td>${[7, 8, 9, 10, 11].map(i => `<td class="n">${f(BT[i].actual)}</td><td class="n" style="color:var(--good)">${f(BT[i].engine)}</td>`).join('')}</tr>`;
-  const hardN = x => Object.values(x.hard).reduce((a, b) => a + b, 0);
-  return `<div class="row"><h2>History</h2><span class="spacer"></span>${['2026-07', '2026-08', '2026-09', '2026-10', '2026-11'].map(h => `<button class="btn ${h === k ? 'primary' : ''}" data-hm="${h}">${MONTHS[+h.slice(5) - 1]}</button>`).join('')}</div>
-  ${adminView() ? `<div class="panel"><h3>Published schedules vs the engine, same inputs</h3>
-    <p class="small muted">Each month was rebuilt with what the schedulers knew: that month's vacations, plus PGY-5, fellow and holiday dates locked as they actually happened. Scored against the approved rules.</p>
-    <div class="tablewrap"><table><thead><tr><th></th>${[7, 8, 9, 10, 11].map(i => `<th class="n">${MONTHS[i - 1]} actual</th><th class="n">${MONTHS[i - 1]} engine</th>`).join('')}</tr></thead><tbody>
-      ${row('Hard-rule breaks', hardN)}${row('Every-other-day calls', x => x.q2)}${row('Vacation bookends broken', x => x.bookendsBroken)}${row('Residents outside target', x => x.outTarget)}${row('Two-person days', x => x.two)}</tbody></table></div>
-    <p class="small muted">Most "breaks" in the real schedules are rules written down this month (H15 sister services; H2, which rules out a PGY-4 in the mid slot), not mistakes. The engine uses more two-person days for the same reason.</p></div>` : ''}
-  <div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="spacer"></span>
-    ${adminView() ? `<button class="btn ${S.histView === 'actual' ? 'primary' : ''}" data-hv="actual">Published schedule</button><button class="btn ${S.histView === 'engine' ? 'primary' : ''}" data-hv="engine">Engine version</button>` : ''}</div>
-    ${calendarHTML(A, k, { click: false, tags })}
-    ${adminView() && S.histView === 'actual' && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
+  if (PUBH === null) { PUBH = []; loadPubHist(); }
+  const pubMonths = [...new Set(PUBH.map(r => r.month_key))].filter(h => !DATA.history[h]);
+  const allMonths = Object.keys(DATA.history).filter(h => h >= '2026-07').sort().concat(pubMonths.sort());
+  if (!allMonths.includes(S.histMonth)) S.histMonth = allMonths.at(-1);
+  const k = S.histMonth, [y, m] = ym(k), hol = B.HOLIDAYS[k] || [];
+  const btns = `<div class="row"><h2>History</h2><span class="spacer"></span>${allMonths.map(h => `<button class="btn ${h === k ? 'primary' : ''}" data-hm="${h}">${MONTHS[+h.slice(5) - 1]}${h.slice(0, 4) !== '2026' ? ' ’' + h.slice(2, 4) : ''}</button>`).join('')}</div>`;
+  if (DATA.history[k]) { // schedules from before the app
+    const hist = DATA.history[k], bt = BT[m];
+    const tags = d => { const x = hist[d - 1]; const t = []; if (hol.includes(d)) t.push('Holiday'); if (x && x.vac.length) t.push('Vac: ' + x.vac.join(', ')); return t.join(' · '); };
+    return `${btns}<div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="muted small">Published schedule (before the app)</span></div>
+    ${calendarHTML(B.actualAssign(DATA, k), k, { click: false, tags, rb: rbFor(k) })}
+    <p class="small muted" style="margin:8px 6px 0">Weekend rounding for months before the app is rebuilt from the call schedule with today's rules, so it may not match who actually rounded.</p>
+    ${adminView() && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
+  }
+  // published from the app: every version, newest first by default; changed cells marked vs the version before
+  const vers = PUBH.filter(r => r.month_key === k); if (!vers.length) return btns + '<div class="panel small muted">Loading…</div>';
+  const vSel = vers.find(r => r.version === S.histVer && S.histVerKey === k) || vers.at(-1), prev = vers.find(r => r.version === vSel.version - 1);
+  const toA = sc => (sc || []).map(a => Array.isArray(a) ? { U: a[0] || null, M: a[1] || null, I: a[2] || null } : a);
+  const A = toA(vSel.schedule), P0 = prev ? toA(prev.schedule) : null, flags = {};
+  if (P0) A.forEach((a, i) => ['U', 'M', 'I'].forEach(sl => { const was = P0[i] && P0[i][sl]; if ((a[sl] || null) !== (was || null)) flags[(i + 1) + '|' + sl] = `changed in v${vSel.version} (was ${was || 'nobody'})`; }));
+  const when = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const nChanged = Object.keys(flags).length;
+  return `${btns}<div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px;gap:6px;flex-wrap:wrap"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="spacer"></span>
+    ${vers.map(r => `<button class="btn ${r === vSel ? 'primary' : ''}" data-hver="${r.version}">${r.version === 1 ? 'Published' : 'Update ' + (r.version - 1)} · ${when(r.published_at)}</button>`).join('')}</div>
+    ${prev ? `<p class="small muted" style="margin:0 6px 8px">${nChanged ? `${nChanged} cell${nChanged > 1 ? 's' : ''} changed from the version before, marked ↻ (hover to see who it was).` : 'No call changes from the version before (rounding may have changed).'}</p>` : ''}
+    ${calendarHTML(A, k, { click: false, changed: flags, rb: vSel.rnd ? unpackRB(vSel.rnd) : rbFor(k), tags: d => (HOLNAMES[k] || {})[d] || (hol.includes(d) ? 'Holiday' : '') })}</div>`;
 }
 
 function viewNotes() {
@@ -956,7 +977,7 @@ function wire() {
   on('#swapN', () => { S.trioSwap.ny = !S.trioSwap.ny; logEvent(k, 'Swapped which New Year trio starts (January follows)'); generate(true); });
   document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => b.dataset.k && b.dataset.k !== S.month ? (() => { S.month = b.dataset.k; $('#monthSel').value = S.month; S.proposals = []; render(); openDrawer(+b.dataset.d, b.dataset.s); toast(`Switched to ${monthName(S.month)} to edit.`); })() : adminView() ? openDrawer(+b.dataset.d, b.dataset.s) : openSwapAsk(+b.dataset.d, b.dataset.s));
   document.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { S.histMonth = b.dataset.hm; render(); });
-  document.querySelectorAll('[data-hv]').forEach(b => b.onclick = () => { S.histView = b.dataset.hv; render(); });
+  document.querySelectorAll('[data-hver]').forEach(b => b.onclick = () => { S.histVer = +b.dataset.hver; S.histVerKey = S.histMonth; render(); });
   document.querySelectorAll('[data-in]').forEach(i => i.onchange = () => { st.inputs[i.dataset.n][i.dataset.in] = i.value.trim(); logEvent(k, `Input: ${i.dataset.n} ${i.dataset.in} = ${i.value.trim() || '(none)'}`); save(); });
   document.querySelectorAll('[data-lv]').forEach(i => i.onchange = () => { const n = i.dataset.n, f = i.dataset.lv; S.people[n] = S.people[n] || {}; S.people[n][f] = i.type === 'checkbox' ? i.checked : i.value; if (f !== 'leaveConfirmed') S.people[n].leaveConfirmed = false; logEvent(k, `Leave: ${n} ${f} = ${i.type === 'checkbox' ? i.checked : i.value}`); save(); render(); });
   on('#inputsApply', () => { location.hash = 'schedule'; generate(true); });

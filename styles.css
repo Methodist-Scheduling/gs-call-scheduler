@@ -231,3 +231,6 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
 .seg { display: inline-flex; width: fit-content; border: 1.5px solid var(--accent); border-radius: 999px; overflow: hidden; margin: 4px 0 14px; }
 .seg button { border: 0; background: none; padding: 6px 14px; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--accent); cursor: pointer; }
 .seg button.on { background: var(--accent); color: #fff; }
+
+.chip .chg { color: var(--accent); font-weight: 800; }
+.minical .mc-d i.rd { color: var(--accent); font-style: normal; font-size: 9.5px; }
