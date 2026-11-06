@@ -482,6 +482,22 @@ function showImprove(x) {
   ov.onclick = e => { if (e.target === ov) close(); }; ov.querySelector('#mcClose').onclick = close; document.addEventListener('keydown', esc_); ov.querySelector('#mcClose').focus();
 }
 
+// Published vs engine, re-scored live: counts plus where each problem happens (who and which dates)
+const BTD = {};
+function btDetail(m) {
+  if (BTD[m]) return BTD[m];
+  const k = `2026-${String(m).padStart(2, '0')}`, mn = MONTHS[m - 1], P = E.prepare(B.buildInput(DATA, 2026, m, 'backtest'));
+  const one = A => { const ev = E.evaluate(P, A), st = ev.stats, ppl = P.people.filter(p => !p.excluded && st[p.name]), o = {};
+    o.hardL = ev.issues.filter(x => x.sev === 'hard').map(x => x.msg.replace(/Day (\d+)/g, (_, d) => `${mn} ${d}`));
+    o.q2L = []; ppl.forEach(p => { const c = st[p.name].calls; c.filter(d => c.includes(d + 2)).forEach(d => o.q2L.push(`${p.name}: ${mn} ${d} → ${d + 2}`)); });
+    o.bookL = []; ppl.forEach(p => { const c = st[p.name].calls, vd = [...p.vacAll].filter(d => { const w = P.days[d - 1] && P.days[d - 1].w; return w >= 1 && w <= 5; }).sort((a, b) => a - b); if (!vd.length) return;
+      const f = vd[0], l = vd.at(-1); [f - 3, f - 2, f - 1].filter(d => c.includes(d)).slice(0, 1).forEach(d => o.bookL.push(`${p.name}: call ${mn} ${d}, right before vacation (${mn} ${f}–${l})`));
+      [l + 1, l + 2, l + 3].filter(d => c.includes(d)).slice(0, 1).forEach(d => o.bookL.push(`${p.name}: call ${mn} ${d}, right after vacation (${mn} ${f}–${l})`)); });
+    o.outL = ppl.filter(p => st[p.name].n < p.tmin || st[p.name].n > p.tmax).map(p => `${p.name}: ${st[p.name].n} calls (target ${p.tmin}${p.tmax > p.tmin ? '–' + p.tmax : ''}), ${st[p.name].n < p.tmin ? 'under' : 'over'}`);
+    o.twoL = A.map((a, i) => !a.M ? `${mn} ${i + 1}: ${a.U || '?'} + ${a.I || '?'}` : null).filter(Boolean);
+    ['hard', 'q2', 'book', 'out', 'two'].forEach(x => o[x] = o[x + 'L'].length); return o; };
+  return BTD[m] = { actual: one(B.actualAssign(DATA, k)), engine: one(BT[m].engineA.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null }))) };
+}
 let PUBH = null; // published_history rows (every published version, newest edits included)
 async function loadPubHist() { try { const { data } = await sb.from('published_history').select('month_key,version,schedule,rnd,published_at').order('month_key').order('version'); PUBH = data || []; } catch (e) { PUBH = []; } if (location.hash.slice(1) === 'history') render(); }
 function viewHistory() {
@@ -494,15 +510,15 @@ function viewHistory() {
   if (DATA.history[k]) { // schedules from before the app
     const hist = DATA.history[k], bt = BT[m];
     const tags = d => { const x = hist[d - 1]; const t = []; if (hol.includes(d)) t.push('Holiday'); if (x && x.vac.length) t.push('Vac: ' + x.vac.join(', ')); return t.join(' · '); };
-    const MS = [7, 8, 9, 10, 11].filter(i => BT[i]), hardN = x => Object.values(x.hard).reduce((a, b) => a + b, 0);
-    const row = (label, f, what) => `<tr><td data-tip="${esc(what)}">${label}</td>${MS.map(i => { const a = f(BT[i].actual), e = f(BT[i].engine), mn = MONTHS_LONG[i - 1], d = Math.abs(e - a);
-      const cmpTxt = e < a ? `Engine: ${d} fewer (better)` : e > a ? `Engine: ${d} more (worse)` : 'Same as published';
-      return `<td class="n" data-tip="${esc(`${label}, ${mn} as published: ${a}. ${what}`)}">${a}</td><td class="n ${e < a ? 'better' : e > a ? 'worse' : ''}" data-tip="${esc(`${label}, ${mn}: published ${a}, engine ${e}. ${cmpTxt}.`)}">${e < a ? '▼ ' : e > a ? '▲ ' : ''}${e}</td>`; }).join('')}</tr>`;
+    const MS = [7, 8, 9, 10, 11].filter(i => BT[i]);
+    const row = (label, key, what) => `<tr><td data-tip="${esc(what)}">${label}</td>${MS.map(i => { const D = btDetail(i), a = D.actual[key], e = D.engine[key];
+      const tip = side => { const L = D[side][key + 'L']; return `${label} · ${MONTHS_LONG[i - 1]} ${side === 'actual' ? 'as published' : 'engine version'} (${L.length})${L.length ? ':\n' + L.slice(0, 12).join('\n') + (L.length > 12 ? `\n+${L.length - 12} more (click for all)` : '') : ''}`; };
+      return `<td class="n clk" data-tip="${esc(tip('actual'))}" data-btd="${i}|actual|${key}|${esc(label)}">${a}</td><td class="n clk ${e < a ? 'better' : e > a ? 'worse' : ''}" data-tip="${esc(tip('engine'))}" data-btd="${i}|engine|${key}|${esc(label)}">${e < a ? '▼ ' : e > a ? '▲ ' : ''}${e}</td>`; }).join('')}</tr>`;
     const cmp = adminView() && MS.length ? `<div class="panel"><h3>Published schedules vs what the engine would have made</h3>
-      <p class="small muted">Each month rebuilt with what the schedulers knew then (that month's vacations, plus PGY-5, fellow and holiday dates locked as they happened), both scored against the v1.3 rules. Lower is better: <b class="better">▼ blue</b> = engine did better, <b class="worse">▲ orange</b> = engine did worse.</p>
+      <p class="small muted">Each month rebuilt with what the schedulers knew then (that month's vacations, plus PGY-5, fellow and holiday dates locked as they happened), both scored live against today's rules. Lower is better: <b class="better">▼ blue</b> = engine did better, <b class="worse">▲ orange</b> = engine did worse.</p>
       <div class="tablewrap"><table><thead><tr><th></th>${MS.map(i => `<th class="n">${MONTHS[i - 1]} actual</th><th class="n">${MONTHS[i - 1]} engine</th>`).join('')}</tr></thead><tbody>
-      ${row('Hard-rule breaks', hardN, 'Breaks of any hard rule in v1.3 (ACGME limits, post-call, sister services, level rules…).')}${row('Every-other-day calls', x => x.q2, 'Calls exactly two days after that person’s previous call (q2). Fewer = more rest between calls.')}${row('Vacation bookends broken', x => x.bookendsBroken, 'Weekend call right before or after someone’s vacation, which eats into the time off.')}${row('Residents outside target', x => x.outTarget, 'People whose call count for the month landed below or above their target range.')}${row('Two-person days', x => x.two, 'Days covered by a PGY-4 + intern with no mid level. Not a rule break, but heavier for those two.')}</tbody></table></div>
-      <p class="small muted">Hover any number for details. Many "breaks" in the real schedules are rules that were only written down this month (H15 sister services; H2, no PGY-4 in the mid slot), so they weren't mistakes at the time. The engine uses more two-person days for the same reason.</p></div>` : '';
+      ${row('Hard-rule breaks', 'hard', 'Breaks of any hard rule in v1.3 (ACGME limits, post-call, sister services, level rules…).')}${row('Every-other-day calls', 'q2', 'Calls exactly two days after that person’s previous call (q2). Fewer = more rest between calls.')}${row('Vacation bookends broken', 'book', 'Weekend call right before or after someone’s vacation, which eats into the time off.')}${row('Residents outside target', 'out', 'People whose call count for the month landed below or above their target range.')}${row('Two-person days', 'two', 'Days covered by a PGY-4 + intern with no mid level. Not a rule break, but heavier for those two.')}</tbody></table></div>
+      <p class="small muted">Hover a number to see where it happens; click it for the full list. Many "breaks" in the real schedules are rules that were only written down this month (H15 sister services; H2, no PGY-4 in the mid slot), so they weren't mistakes at the time. The engine uses more two-person days for the same reason.</p></div>` : '';
     return `${btns}${cmp}<div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="muted small">Published schedule (before the app)</span></div>
     ${calendarHTML(B.actualAssign(DATA, k), k, { click: false, tags, rb: rbFor(k) })}
     ${adminView() && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
@@ -986,6 +1002,8 @@ function wire() {
   on('#swapN', () => { S.trioSwap.ny = !S.trioSwap.ny; logEvent(k, 'Swapped which New Year trio starts (January follows)'); generate(true); });
   document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => b.dataset.k && b.dataset.k !== S.month ? (() => { S.month = b.dataset.k; $('#monthSel').value = S.month; S.proposals = []; render(); openDrawer(+b.dataset.d, b.dataset.s); toast(`Switched to ${monthName(S.month)} to edit.`); })() : adminView() ? openDrawer(+b.dataset.d, b.dataset.s) : openSwapAsk(+b.dataset.d, b.dataset.s));
   document.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { S.histMonth = b.dataset.hm; render(); });
+  document.querySelectorAll('[data-btd]').forEach(el => el.onclick = () => { const [m, side, key, label] = el.dataset.btd.split('|'); const L = btDetail(+m)[side][key + 'L'];
+    modal(`<h3>${esc(label)} · ${MONTHS_LONG[m - 1]} ${side === 'actual' ? 'as published' : 'engine version'} (${L.length})</h3>${L.length ? `<ul class="issues">${L.map(t => `<li class="small">${esc(t)}</li>`).join('')}</ul>` : '<p class="small muted">None.</p>'}<div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" data-close>Close</button></div>`); });
   document.querySelectorAll('[data-hver]').forEach(b => b.onclick = () => { S.histVer = +b.dataset.hver; S.histVerKey = S.histMonth; render(); });
   document.querySelectorAll('[data-in]').forEach(i => i.onchange = () => { st.inputs[i.dataset.n][i.dataset.in] = i.value.trim(); logEvent(k, `Input: ${i.dataset.n} ${i.dataset.in} = ${i.value.trim() || '(none)'}`); save(); });
   document.querySelectorAll('[data-lv]').forEach(i => i.onchange = () => { const n = i.dataset.n, f = i.dataset.lv; S.people[n] = S.people[n] || {}; S.people[n][f] = i.type === 'checkbox' ? i.checked : i.value; if (f !== 'leaveConfirmed') S.people[n].leaveConfirmed = false; logEvent(k, `Leave: ${n} ${f} = ${i.type === 'checkbox' ? i.checked : i.value}`); save(); render(); });
