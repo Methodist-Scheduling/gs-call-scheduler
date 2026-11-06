@@ -260,3 +260,8 @@ td.clk { cursor: pointer; } td.clk:hover { text-decoration: underline dotted; }
 .addform input[type=checkbox] { justify-self: start; width: auto; margin: 0; }
 .checkline { display: flex !important; align-items: flex-start; gap: 8px; margin: 12px 0 0; line-height: 1.4; }
 .checkline input { flex: none; width: auto; margin: 3px 0 0; }
+
+/* attendings */
+.cal .att { margin-top: 4px; font-size: 10.5px; line-height: 1.3; color: var(--ink); font-weight: 600; }
+.atttable { width: 100%; } .atttable td { padding: 2px 4px; } .atttable input { width: 100%; min-width: 90px; padding: 3px 6px; font-size: 13px; }
+.atttable tr.wkrow td { background: var(--wk); }

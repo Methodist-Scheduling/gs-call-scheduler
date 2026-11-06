@@ -154,6 +154,7 @@ function connect() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'swaps' }, () => { loadSwaps().then(render); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendings' }, () => { if (attPending) return; loadAtt().then(() => { if (!document.activeElement || !document.activeElement.classList.contains('att-in')) render(); }); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'published' }, () => { if (!S.isAdmin) loadPublished().then(pub => { render(); publishAlerts(pub); }); }).subscribe();
 }
 (CTX.months || []).forEach(adoptMonth);
@@ -173,6 +174,29 @@ const whoName = id => (S.names && S.names[id]) || 'someone';
 const whenTxt = t => t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 async function loadNames() { const { data } = await sb.from('profiles').select('id,display_name,roster_name,active'); S.names = Object.fromEntries((data || []).map(p => [p.id, p.display_name])); S.acct = Object.fromEntries((data || []).filter(p => p.roster_name && p.active).map(p => [p.roster_name, p.id])); }
 async function loadSwaps() { const { data } = await sb.from('swaps').select('*').order('created_at'); S.swaps = data || []; }
+// ---------- attendings (Trauma AM/PM, SICU, EGS/TBU per day; own table so the PD can edit and everyone can read) ----------
+S.att = {}; let attPending = 0; const attTimers = {};
+const ATT_COLS = [['tam', 'Trauma AM'], ['tpm', 'Trauma PM'], ['sicu', 'SICU'], ['egs', 'EGS/TBU']];
+const canAtt = () => isScheduler() || S.role === 'Program Director';
+async function loadAtt() { const { data, error } = await sb.from('attendings').select('month_key,data'); if (!error) { S.att = {}; (data || []).forEach(r => S.att[r.month_key] = r.data || {}); } }
+function saveAtt(k) { clearTimeout(attTimers[k]); attTimers[k] = setTimeout(async () => { attPending++; const { error } = await sb.from('attendings').upsert({ month_key: k, data: S.att[k] || {}, updated_at: new Date().toISOString() }); setTimeout(() => attPending--, 1500); if (error) toast('Attendings not saved: ' + error.message); }, 500); }
+function setAtt(k, d, col, v) { const m = S.att[k] = S.att[k] || {}; const day = m[d] = Object.assign({}, m[d]); v = String(v || '').trim(); if (v) day[col] = v; else delete day[col]; if (!Object.keys(day).length) delete m[d]; }
+function attLines(k, d) { const a = (S.att[k] || {})[d]; if (!a) return []; const out = [];
+  if (a.tam || a.tpm) out.push('Trauma: ' + (a.tam && a.tpm && a.tam !== a.tpm ? `${a.tam} AM / ${a.tpm} PM` : (a.tam || a.tpm) + (a.tam && a.tpm ? '' : a.tam ? ' (AM)' : ' (PM)')));
+  if (a.sicu) out.push('SICU: ' + a.sicu); if (a.egs) out.push('EGS/TBU: ' + a.egs); return out; }
+function attendingsPanel(k) {
+  const nd = ndays(k), [y, m] = ym(k), ed = canAtt(), A = S.att[k] || {};
+  const names = [...new Set(Object.values(S.att).flatMap(mm => Object.values(mm).flatMap(x => Object.values(x))))].sort();
+  const rows = Array.from({ length: nd }, (_, i) => i + 1).map(d => { const w = E.dow(y, m, d), wk = w === 0 || w === 6;
+    return `<tr class="${wk ? 'wkrow' : ''}"><td class="small" style="white-space:nowrap">${DOW[w]} ${d}</td>${ATT_COLS.map(([c, l]) => `<td><input type="text" class="att-in" list="attNames" data-att="${d}|${c}" value="${esc((A[d] || {})[c] || '')}" ${ed ? '' : 'disabled'} aria-label="${l} attending, ${monthName(k)} ${d}"></td>`).join('')}</tr>`; }).join('');
+  return `<div class="panel" style="margin-top:14px" id="attPanel"><h3>Attendings · ${monthName(k)}</h3>
+    <p class="small muted">Shown to everyone on the calendar and the PDF. ${ed ? 'Type a name per day, or fill a stretch of days at once below. Pasting a list (one name per line) fills down from that day.' : 'Schedulers, chiefs and the PD edit these.'}</p>
+    ${ed ? `<div class="row small" style="gap:8px;flex-wrap:wrap;margin-bottom:10px"><b>Fill</b><select id="afCol" class="f">${ATT_COLS.map(([c, l]) => `<option value="${c}">${l}</option>`).join('')}<option value="tr">Trauma AM + PM</option></select>
+      <input id="afName" type="text" list="attNames" placeholder="Attending" style="width:150px"> from <select id="afFrom" class="f">${Array.from({ length: nd }, (_, i) => `<option>${i + 1}</option>`).join('')}</select> to <select id="afTo" class="f">${Array.from({ length: nd }, (_, i) => `<option ${i + 1 === Math.min(7, nd) ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>
+      <button class="btn primary" id="afGo">Fill</button><button class="btn" id="afClear">Clear those days</button></div>` : ''}
+    <datalist id="attNames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div class="tablewrap"><table class="atttable"><thead><tr><th>Day</th>${ATT_COLS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
 async function loadRequests() { const { data, error } = await sb.from('requests').select('*').order('created_at'); if (!error) S.requests = data || []; }
 async function loadNotes() { if (!adminView() && !S.isAdmin) return; const { data } = await sb.from('month_notes').select('*'); (data || []).forEach(r => S.notes[r.key] = r.notes_text); }
 let notesTimer = null;
@@ -251,7 +275,8 @@ function calendarHTML(A, k, o) {
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     if (o.mine && ![a.U, a.M, a.I].includes(o.mine) && !(rl && rl.some(t => new RegExp('\\b' + o.mine + '\\b').test(t)))) return;
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
-    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num"><span class="wd">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][E.dow(...ym(k), d)]} </span>${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${rnd}</div>`;
+    const al = o.noAtt ? [] : attLines(k, d), att = al.length ? `<div class="att" title="Attendings">${al.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
+    h += `<div class="day ${wk ? 'wk' : ''}"><div class="dn"><span class="num"><span class="wd">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][E.dow(...ym(k), d)]} </span>${d}</span><span class="tag">${esc(o.tags ? o.tags(d) : '')}</span></div>${chips}${att}${rnd}</div>`;
   });
   if (!o.mine) { const last = E.dow(y, m, A.length), nk = adjKey(1); for (let i = 1; i <= 6 - last; i++) h += adjDay(nk, i, true); }
   if (o.mine && !h) return `<div class="panel small">You're not on call or rounding in ${esc(monthName(k))}.</div>`;
@@ -376,7 +401,8 @@ function viewInputs() {
     <td>${pick ? `<input type="text" data-in="picks" data-n="${esc(n)}" value="${esc(v.picks)}" placeholder="e.g. 4, 9, 15" ${pickEd ? '' : 'disabled'} aria-label="${esc(n)} call picks">` : ''}</td></tr>`; }).join('')}
   </tbody></table></div>
   <p class="small muted">Vacation days are that month's dates (Mon–Fri block calls; weekends next to it are protected by S4). Leave dates carry across months. Unconfirmed leave dates show ⚠ on every call they affect. Call picks lock that person into the upper slot on those days.</p>
-  <div class="row"><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div></div>`;
+  <div class="row"><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div></div>
+  ${attendingsPanel(k)}`;
 }
 function order(n) { const p = DATA.pgy[n]; return p === 'F' ? -1 : 6 - p; } // fellow first, then PGY-5 down to interns
 
@@ -660,16 +686,17 @@ async function downloadPDF() {
       const a = st.A[d - 1]; doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(d), x + 4, yy + 12);
       const hn = (HOLNAMES[k] || {})[d]; if (hn) { doc.setFontSize(7); doc.setTextColor(160, 25, 79); doc.text(hn.toUpperCase(), x + cw - 4, yy + 11, { align: 'right' }); doc.setTextColor(0); }
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-      const lines = roundLines(rb, k, d), showR = !!lines;
+      const lines = roundLines(rb, k, d), showR = !!lines, al = attLines(k, d);
       const nameGap = showR ? 10.5 : 12; [a.U, a.M || '(two-person)', a.I].forEach((n, i) => doc.text(String(n || ''), x + 6, yy + 25 + i * nameGap));
+      let attH = 0; if (al.length) { doc.setFontSize(5.6); doc.setTextColor(30, 80, 160); al.forEach((t, i) => doc.text(doc.splitTextToSize(t, cw - 10)[0], x + 6, yy + 25 + 3 * nameGap - 2 + i * 6.2)); doc.setTextColor(0); attH = al.length * 6.2; }
       if (showR) {
-        const top0 = yy + 25 + 3 * nameGap, lh = Math.min(6.6, (yy + ch - 3 - top0) / lines.length);
+        const top0 = yy + 25 + 3 * nameGap + attH, lh = Math.min(6.6, (yy + ch - 3 - top0) / lines.length);
         doc.setFontSize(Math.max(4.6, lh * 0.88)); doc.setTextColor(70);
         lines.forEach((t, i) => doc.text(doc.splitTextToSize(t, cw - 10)[0], x + 6, top0 + i * lh));
         doc.setTextColor(0);
       }
     }
-    doc.setFontSize(7); doc.setTextColor(90); doc.text('Weekend/holiday rounding in small print (T/EGS, ICU, GS1, GS2, V/T = Vasc/Thor, HPB/Tx). * = cross-cover.', mx, H - 14); doc.setTextColor(0);
+    doc.setFontSize(7); doc.setTextColor(90); doc.text('Blue small print = attendings. Grey small print on Sat/Sun/holidays = rounding (T/EGS, ICU, GS1, GS2, V/T = Vasc/Thor, HPB/Tx). * = cross-cover.', mx, H - 14); doc.setTextColor(0);
     const blob = doc.output('blob'); const name = `${k}-01-monthly-call-schedule-${MONTHS_LONG[m - 1].toLowerCase()}${st.status === 'Published' ? '' : '-draft'}.pdf`;
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); toast('Downloaded ' + name);
   } catch (e) { toast('Download didn’t go through: ' + ((e && (e.message || e.code)) || 'declined')); }
@@ -996,6 +1023,13 @@ function wire() {
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-rreset]').forEach(el => el.onclick = () => { const st2 = cur(); delete st2.rndEdit[el.dataset.rreset]; logEvent(S.month, 'Reset rounding edits'); save(); render(); });
+  document.querySelectorAll('[data-att]').forEach(i => {
+    i.onchange = () => { const [d, c] = i.dataset.att.split('|'); setAtt(S.month, +d, c, i.value); saveAtt(S.month); };
+    i.onpaste = e => { const t = (e.clipboardData || window.clipboardData).getData('text'); if (!/\n/.test(t.trim())) return; e.preventDefault();
+      const [d, c] = i.dataset.att.split('|'); t.trim().split(/\r?\n/).forEach((v, j) => { if (+d + j <= ndays(S.month)) setAtt(S.month, +d + j, c, v); }); saveAtt(S.month); render(); toast('Pasted down from day ' + d + '.'); }; });
+  const afRun = clear => { const c = $('#afCol').value, n = clear ? '' : $('#afName').value.trim(), a = +$('#afFrom').value, b = +$('#afTo').value; if (!clear && !n) { toast('Type an attending name first.'); return; }
+    for (let d = Math.min(a, b); d <= Math.max(a, b); d++) (c === 'tr' ? ['tam', 'tpm'] : [c]).forEach(cc => setAtt(S.month, d, cc, n)); saveAtt(S.month); logEvent(S.month, `Attendings: ${clear ? 'cleared' : n + ' on'} ${c === 'tr' ? 'Trauma AM+PM' : ATT_COLS.find(x => x[0] === c)[1]}, days ${Math.min(a, b)}–${Math.max(a, b)}`); render(); };
+  on('#afGo', () => afRun(false)); on('#afClear', () => afRun(true));
   document.querySelectorAll('[data-statv]').forEach(b => b.onclick = () => { STATV = b.dataset.statv; try { localStorage.setItem('gs-statv', STATV); } catch (e) {} render(); });
   document.querySelectorAll('[data-imp]').forEach(el => el.onclick = () => showImprove(IMPROVE[+el.dataset.imp]));
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
@@ -1094,7 +1128,7 @@ async function publishAlerts(pub) {
 }
 if (!S.isAdmin) { KEYS.forEach(k => { S.M[k].A = null; }); }
 render();
-Promise.all([loadRequests(), loadNotes(), loadNames(), loadSwaps(), S.isAdmin ? Promise.resolve(null) : loadPublished()]).then(([, , , , pub]) => { render(); if (pub) publishAlerts(pub); });
+Promise.all([loadRequests(), loadNotes(), loadNames(), loadSwaps(), S.isAdmin ? Promise.resolve(null) : loadPublished(), loadAtt()]).then(([, , , , pub]) => { render(); if (pub) publishAlerts(pub); });
 connect();
 window.__schedRender = render;
 };
