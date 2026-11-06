@@ -109,7 +109,7 @@
     const ref = {}; (refQ.data || []).forEach(r => ref[r.key] = r.value);
     if (!ref.data || !ref.pre) { if (profile.is_admin) return showImport(profile); card('<p>The scheduler isn’t loaded with data yet. Ask an admin.</p>'); return; }
     auth.hidden = true; document.getElementById('shell').hidden = false;
-    document.getElementById('whoName').textContent = `${profile.display_name} · ${({ scheduler: 'Scheduler', chief: 'PGY-5 chief', pd: 'PD', resident: 'Resident' })[profile.role]}${profile.is_admin ? ' · admin' : ''}`;
+    document.getElementById('whoName').textContent = `${profile.display_name} · ${({ scheduler: 'Scheduler', chief: 'Chief', pd: 'PD', resident: 'Resident' })[profile.role]}${profile.is_admin ? ' · admin' : ''}`;
     document.getElementById('previewWrap').hidden = !profile.can_preview; // only the tester account gets "Preview as"
     document.getElementById('peopleTab').hidden = !profile.is_admin;
     document.getElementById('signOut').onclick = () => sb.auth.signOut().then(() => { location.hash = ''; location.reload(); });
