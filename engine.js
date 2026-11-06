@@ -92,6 +92,7 @@
     // W3 (hard): the fellow and the ICU resident alternate weekends; on the other's weekend they don't work at all (no call either)
     days.forEach(x => { if (!isWknd(x.w)) return; const rec = RB[x.d]; if (!rec || !rec.weekend) return; const a = A[x.d - 1];
       ['I', 'M', 'U'].forEach(s => { const p = a[s] && byName[a[s]]; if (!p) return;
+        if ((input.locks || []).some(l => l.day === x.d && l.slot === s && l.name === p.name)) return; // locked picks and holiday list win (H10, H11)
         if (p.lvl === 'F' && !p.excluded && !rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (fellow) on call on an ICU-resident weekend`, 'hard');
         if (p.rotation === 'ICU' && p.lvl !== 'F' && rec.fellowWeek) add('W3', 1e6, `Day ${x.d}: ${p.name} (ICU resident) on call on the fellow's weekend`, 'hard');
         if ((rec.tegsOff || []).includes(p.name)) add('W6', 1e6, `Day ${x.d}: ${p.name} on call on their T/EGS off weekend`, 'hard'); }); });
@@ -290,19 +291,32 @@
       const workers = new Set(all.concat(...Object.values(b).map(v => v.map(n => n.replace(' (cross-cover)', '')))));
       return { blocks: b, callers, workers };
     };
-    P.days.forEach(x => {
-      const lone = x.w === 0 && x.d === 1; // month starting on a Sunday
-      if (x.w !== 6 && !lone) return;
-      const sat = x.w === 6 ? x.d : 0, fri = sat - 1, sun = sat + 1;
-      const days = lone ? [1] : [fri, sat, sun].filter(d => d >= 1 && d <= P.nd);
-      const fw = !!fellow && wkIdx % 2 === fStart && fellowRounds < 2 && !fellow.vacAll.has(lone ? 1 : sat) && !(fellow.leaveDays || []).includes(lone ? 1 : sat);
-      if (fw) fellowRounds++;
-      let tUp = null;
-      if (tUppers.length >= 2) for (let i = 0; i < tUppers.length && !tUp; i++) { const p = tUppers[(wkIdx + tStart + i) % tUppers.length]; if (!p.vacAll.has(lone ? 1 : sat) && !(p.leaveDays || []).includes(lone ? 1 : sat)) tUp = p; }
-      const rec = build(days, lone ? 1 : sat, prevWorkers, fw, false, tUp);
+    // weekends of the month
+    const WK = [];
+    P.days.forEach(x => { const lone = x.w === 0 && x.d === 1; if (x.w !== 6 && !lone) return; const sat = x.w === 6 ? x.d : 0;
+      WK.push({ ref: lone ? 1 : sat, days: lone ? [1] : [sat - 1, sat, sat + 1].filter(d => d >= 1 && d <= P.nd) }); });
+    const okOn = (p, ref) => !p.vacAll.has(ref) && !(p.leaveDays || []).includes(ref);
+    // locked call (PGY-5/fellow picks H10, holiday Working list H11) decides whose weekend it is when it can (locks win)
+    const LOCKS = P.input.locks || [];
+    const lockedOn = (name, w) => LOCKS.some(l => l.name === name && w.days.includes(l.day));
+    // W3: fellow's ICU weekends for a given start parity (two a month, skipping her away weekends)
+    const icuRes = P.people.filter(p => p.rotation === 'ICU' && p.lvl !== 'F' && !p.excluded);
+    const fSet = par => { const s = new Set(); if (!fellow) return s; WK.forEach((w, i) => { if (i % 2 === par && s.size < 2 && okOn(fellow, w.ref)) s.add(i); }); return s; };
+    const fConf = par => { const s = fSet(par); return WK.reduce((n, w, i) => n + (s.has(i) ? icuRes.filter(r => lockedOn(r.name, w)).length : (fellow && lockedOn(fellow.name, w) ? 1 : 0)), 0); };
+    const fPar = [fStart, 1 - fStart].sort((a, c) => fConf(a) - fConf(c))[0], FW = fSet(fPar);
+    // W6: on-duty T/EGS upper level for a given rotation offset
+    const tOn = (i, off) => { for (let j = 0; j < tUppers.length; j++) { const p = tUppers[(i + off + j) % tUppers.length]; if (okOn(p, WK[i].ref)) return p; } return null; };
+    const tConf = off => WK.reduce((n, w, i) => { const on = tOn(i, off); return n + tUppers.filter(u => u !== on && lockedOn(u.name, w)).length; }, 0);
+    const tOff = tUppers.length >= 2 ? [...Array(tUppers.length).keys()].sort((a, c) => (tConf(a) - tConf(c)) || ((a !== tStart) - (c !== tStart)))[0] : 0;
+    WK.forEach((w, i) => {
+      const days = w.days;
+      const fw = FW.has(i);
+      const tUp = tUppers.length >= 2 ? tOn(i, tOff) : null;
+      const rec = build(days, w.ref, prevWorkers, fw, false, tUp);
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
+    void fellowRounds;
     (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = build([d], d, new Set(), false, true); rec.holiday = true; out[d] = rec; });
     return out;
   }
