@@ -500,12 +500,26 @@ function showLink(link) { const o = $('#linkOut'); if (!o) return toast('Link re
 // ---------- router ----------
 const VIEWS = { people: viewPeople, schedule: viewSchedule, inputs: viewInputs, dashboard: viewDashboard, history: viewHistory, notes: viewNotes, rules: viewRules, approval: viewApproval };
 function route() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'schedule'; }
+// Make the signed-in person's own name stand out everywhere it appears (calendar, rounding, tables, dashboard).
+const MY_NAME = (() => { const dn = String(CTX.profile.display_name || '').trim().toLowerCase(), first = dn.split(/\s+/)[0];
+  const names = Object.keys(DATA.pgy || {}); return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || null; })();
+function highlightMe(root) {
+  if (!MY_NAME || !root) return;
+  const re = new RegExp('\\b' + MY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+  const skip = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'MARK']);
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => (n.parentElement && !skip.has(n.parentElement.tagName) && !n.parentElement.closest('select,textarea') && re.test(n.nodeValue)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  const hits = []; while (w.nextNode()) hits.push(w.currentNode);
+  hits.forEach(t => { const parts = t.nodeValue.split(new RegExp('(' + re.source + ')')); const frag = document.createDocumentFragment();
+    parts.forEach(s => { if (s === MY_NAME) { const m = document.createElement('mark'); m.className = 'me'; m.textContent = s; frag.appendChild(m); } else if (s) frag.appendChild(document.createTextNode(s)); });
+    t.parentNode.replaceChild(frag, t); });
+  root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
+}
 function render() {
   const r = route();
   const pv = $('#previewNote'); if (pv) pv.hidden = !(S.isAdmin && roleKey(S.role) !== S.realRole);
   document.querySelectorAll('nav.tabs a').forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + r ? 'page' : 'false'));
   if (cur().A && !['schedule', 'dashboard'].includes(r)) evaluateNow();
-  $('#main').innerHTML = VIEWS[r](); wire();
+  $('#main').innerHTML = VIEWS[r](); wire(); highlightMe($('#main'));
   if (r === 'schedule' && !cur().A && isScheduler() && !cur()._auto) { cur()._auto = true; generate(false); }
 }
 function wire() {
