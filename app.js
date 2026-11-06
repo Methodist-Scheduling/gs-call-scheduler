@@ -84,7 +84,7 @@ let CUR = null;
 function evaluateNow() {
   const st = cur(); if (!st.A) return null;
   const inp = buildInput(); const P = E.prepare(inp); const ev = E.evaluate(P, st.A);
-  CUR = { inp, P, ev, rb: E.roundingBlocks(P, st.A, B.HOLIDAYS[S.month] || []), est: estimated(st.A) };
+  CUR = { inp, P, ev, rb: getRB(S.month, P), est: estimated(st.A) };
   return CUR;
 }
 function estimated(A) { // calls that depend on an unconfirmed date
@@ -110,11 +110,15 @@ function generate(keepLocks, k) {
 }
 
 // ---------- persistence (Supabase) ----------
-function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, inputs: st.inputs }; } // requests and notes live in their own tables
+function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, inputs: st.inputs, rnd: st.A ? packRB(E.roundingBlocks(E.prepare(buildInput(k)), st.A, B.HOLIDAYS[k] || [])) : null }; } // requests and notes live in their own tables
+// Rounding is worked out by admins (who can see leave dates) and saved with the month; residents draw it from the saved copy.
+function packRB(rb) { const seen = new Map(); Object.keys(rb).map(Number).sort((a, b) => a - b).forEach(d => { const r = rb[d]; if (!seen.has(r)) seen.set(r, { days: [], blocks: r.blocks, weekend: !!r.weekend, holiday: !!r.holiday }); seen.get(r).days.push(d); }); return [...seen.values()]; }
+function unpackRB(list) { const rb = {}; (list || []).forEach(x => { const r = { blocks: x.blocks, weekend: x.weekend, holiday: x.holiday }; x.days.forEach(d => rb[d] = r); }); return rb; }
+function getRB(k, P) { const st = S.M[k]; if (!S.isAdmin && st.rnd) return unpackRB(st.rnd); return E.roundingBlocks(P, st.A, B.HOLIDAYS[k] || []); }
 function adoptMonth(row) {
   const k = row.key; if (!S.M[k]) return; const st = S.M[k], d = row.data || {};
   if (d.A) st.A = d.A.map(([U, M, I]) => ({ U, M, I }));
-  ['locks', 'inputs'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
+  ['locks', 'inputs', 'rnd'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
   st.status = row.status || st.status; existing.add(k);
 }
 function adoptSettings(r) { if (!r) return; if (r.rules && Object.keys(r.rules).length) S.rules = Object.assign(S.rules, r.rules); if (r.trio_swap) S.trioSwap = r.trio_swap; if (r.people && Object.keys(r.people).length) S.people = r.people; }
@@ -123,7 +127,7 @@ function save(k) {
   k = k || S.month; if (applyingRemote) return; clearTimeout(timers[k]);
   timers[k] = setTimeout(async () => {
     const st = S.M[k]; pendingOwn++;
-    const body = { status: st.status, data: monthData(k) };
+    const body = S.realRole === 'pd' ? { status: st.status } : { status: st.status, data: monthData(k) }; // the PD only moves the status
     const q = existing.has(k) ? sb.from('months').update(body).eq('key', k) : sb.from('months').insert(Object.assign({ key: k }, body));
     const { error } = await q; setTimeout(() => pendingOwn--, 1500);
     if (error) toast('Not saved: ' + (/row-level|permission/i.test(error.message) ? 'your role can’t make this change.' : error.message)); else existing.add(k);
@@ -147,6 +151,8 @@ adoptSettings(CTX.settings);
 (CTX.versions || []).forEach(v => { const st = S.M[v.month_key]; if (st) st.versions.push({ n: v.n, at: v.created_at, status: v.status, A: v.schedule, changed: v.changed }); });
 (CTX.logs || []).slice().reverse().forEach(l => { const st = S.M[l.month_key]; if (st) st.log.push({ at: l.at, role: '', text: l.text }); });
 if (['scheduler', 'chief'].includes(S.realRole) && !existing.has('2026-12') && S.M['2026-12'].A) save('2026-12');
+// backfill the saved rounding copy residents read from
+if (['scheduler', 'chief'].includes(S.realRole)) Object.keys(S.M).forEach(k => { const st = S.M[k]; if (existing.has(k) && st.A && !st.rnd && st.status !== 'PD review') save(k); });
 
 const ROSTER_NAMES = () => Object.keys(DATA.pgy || {}).sort((x, y) => order(x) - order(y) || x.localeCompare(y));
 // ---------- requests (own table; residents only ever load their own) ----------
@@ -251,7 +257,7 @@ function softDetail(k, ev) {
   if (k === 'S3') return 'GS2 resident on call a Sunday or Tuesday night (before a big colorectal day)';
   if (k === 'S6') return requestMisses().join(', ') || 'none';
   if (k === 'S2') return 'someone is post-call on protected time';
-  if (k === 'F3') return 'weekend + holiday load, year to date, is uneven inside a group (see Dashboard)';
+  if (k === 'F3') return 'weekend + holiday load, year to date, is uneven inside a group (see Stats)';
   if (k === 'F4') return 'two-person call uneven across PGY-4s';
   return '';
 }
@@ -288,7 +294,7 @@ function viewDashboard() {
   const upperAsk = ppl.filter(p => [4, 5, 'F'].includes(p.lvl)).reduce((a, p) => a + p.tmin, 0);
   const midCap = ppl.filter(p => p.lvl === 2 || p.lvl === 3).reduce((a, p) => a + p.tmax, 0);
   const improve = improvements(ev, P, ppl); IMPROVE = improve;
-  return `<div class="row"><h2>${monthName(S.month)} dashboard</h2><span class="muted small">Live from the current draft. Year to date = Jul–Nov actual + any earlier drafts + this month.</span></div>
+  return `<div class="row"><h2>${monthName(S.month)} stats</h2><span class="muted small">Live from the current draft. Year to date = Jul–Nov actual + any earlier drafts + this month.</span></div>
   <div class="tiles">
     <div class="tile ${hard ? 'crit' : 'good'}"><div class="v">${hard}</div><div class="l">Hard-rule breaks</div></div>
     <div class="tile ${inT === ppl.length ? 'good' : 'warn'}"><div class="v">${inT}/${ppl.length}</div><div class="l">Residents in call target</div></div>
@@ -363,7 +369,7 @@ function viewNotes() {
   const st = cur(), k = S.month, roster = Object.keys(st.inputs), mn = MONTHS_LONG[ym(k)[1] - 1], C = cons(k);
   const pend = S.requests.filter(r => r.month_key === k && r.status === 'pending'), denied = S.requests.filter(r => r.month_key === k && r.status === 'denied');
   const otherPend = S.requests.filter(r => r.month_key !== k && r.status === 'pending').length;
-  return `<div class="row"><h2>Notes for Claude · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
+  return `<div class="row"><h2>Requests · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
     ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
       <div class="row" style="margin-top:6px;gap:6px">${isScheduler() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px"><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button>` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
@@ -452,7 +458,7 @@ function scheduleText() { const k = S.month; return `${monthName(k)} call schedu
 async function downloadPDF() {
   const k = S.month, st = cur(), [y, m] = ym(k);
   try {
-    const rb = E.roundingBlocks(E.prepare(buildInput()), st.A, B.HOLIDAYS[k] || []);
+    const rb = getRB(k, E.prepare(buildInput()));
     const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
     const W = 792, H = 612, mx = 28, top = 70, cw = (W - 2 * mx) / 7;
     const first = E.dow(y, m, 1), rows = Math.ceil((first + st.A.length) / 7), ch = (H - top - 40) / rows;
@@ -532,7 +538,7 @@ function viewPeople() {
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
   <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Roster name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
-  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td><select class="f" data-proster="${p.id}" aria-label="Roster name for ${esc(p.display_name)}"><option value="">—</option>${ROSTER_NAMES().map(n => `<option ${n === p.roster_name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
+  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td><select class="f" data-proster="${p.id}" aria-label="Roster name for ${esc(p.display_name)}"><option value="">—</option>${ROSTER_NAMES().map(n => `<option ${n === p.roster_name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${/@no-email\.example\.com$/.test(p.email || '') ? '<span class="muted">no email</span>' : esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
     <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id || p.role !== 'resident' ? 'disabled' : ''} aria-label="Admin" title="${p.role !== 'resident' ? 'Schedulers, chiefs and the PD are always admins' : ''}"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
@@ -540,10 +546,10 @@ function viewPeople() {
   </tbody></table></div><p class="small muted">Unchecking Active blocks sign-in but keeps the person's history. You can't change your own role, admin or active status, so nobody locks themselves out.</p></div>
   <div class="panel"><h3>Add a person</h3><div class="kv small">
     <label for="nName">Full name</label><input id="nName" type="text" placeholder="Jane Doe">
-    <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="for the password link">
+    <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="optional if you copy the link instead">
     <label for="nRoster">Roster name</label><select id="nRoster" class="f"><option value="">— (PD or not on the call roster)</option>${ROSTER_NAMES().map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-    <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox"></div>
+    <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox" style="justify-self:start;width:auto;margin:0"></div>
     <label class="row small" style="margin-top:8px"><input type="checkbox" id="nSend" checked> Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</label>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="nAdd">Add person</button></div>
     <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div></div>`;
@@ -557,7 +563,7 @@ function wirePeople() {
   document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) showLink(d.link); });
   const add = $('#nAdd'); if (add) add.onclick = async () => {
     const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
-    if (!body.display_name || !body.email) return toast('Name and email are both needed.');
+    if (!body.display_name) return toast('Add their name.'); if (!body.email && body.send_email) return toast('No email: uncheck “Email them the setup link” and copy the link instead.');
     const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
     if (d) { PEOPLE = null; render(); if (d.link) setTimeout(() => showLink(d.link), 400); }
   };
@@ -572,20 +578,23 @@ const MY_NAME = (() => { if (CTX.profile.roster_name) return CTX.profile.roster_
   const names = Object.keys(DATA.pgy || {}); const nick = DATA.nicknameOf || {}; return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || names.find(n => (nick[n] || '').toLowerCase() === first) || null; })();
 function highlightMe(root) {
   if (!MY_NAME || !root) return;
-  const re = new RegExp('\\b' + MY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+  const full = String(CTX.profile.display_name || '').trim(), alts = [...new Set([full.split(/\s+/).length > 1 ? full : null, MY_NAME].filter(Boolean))].sort((x, y) => y.length - x.length);
+  const re = new RegExp('\\b(?:' + alts.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')).join('|') + ')\\b');
   const skip = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'MARK']);
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => (n.parentElement && !skip.has(n.parentElement.tagName) && !n.parentElement.closest('select,textarea') && re.test(n.nodeValue)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
   const hits = []; while (w.nextNode()) hits.push(w.currentNode);
   hits.forEach(t => { const parts = t.nodeValue.split(new RegExp('(' + re.source + ')')); const frag = document.createDocumentFragment();
-    parts.forEach(s => { if (s === MY_NAME) { const m = document.createElement('mark'); m.className = 'me'; m.textContent = s; frag.appendChild(m); } else if (s) frag.appendChild(document.createTextNode(s)); });
+    parts.forEach(s => { if (s && re.test(s) && alts.some(x => new RegExp('^' + x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + '$').test(s))) { const m = document.createElement('mark'); m.className = 'me'; m.textContent = s; frag.appendChild(m); } else if (s) frag.appendChild(document.createTextNode(s)); });
     t.parentNode.replaceChild(frag, t); });
   root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
 }
 const ADMIN_TABS = ['inputs', 'dashboard', 'rules', 'people'];
+const TAB_ORDER = { default: ['schedule', 'notes', 'inputs', 'dashboard', 'history', 'rules', 'approval', 'people'], 'Program Director': ['schedule', 'approval', 'inputs', 'dashboard', 'notes', 'history', 'rules', 'people'] };
+function orderTabs() { const nav = document.querySelector('nav.tabs'); if (!nav) return; (TAB_ORDER[S.role] || TAB_ORDER.default).forEach(t => { const el = nav.querySelector(`a[href="#${t}"]`); if (el) nav.appendChild(el); }); }
 function render() {
-  let r = route();
+  let r = route(); orderTabs();
   if (ADMIN_TABS.includes(r) && !adminView()) { r = 'schedule'; history.replaceState(null, '', '#schedule'); }
-  document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); if (t === 'notes') a.textContent = adminView() ? 'Notes for Claude' : 'Requests'; });
+  document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); });
   const pv = $('#previewNote'); if (pv) pv.hidden = !(S.isAdmin && roleKey(S.role) !== S.realRole);
   document.querySelectorAll('nav.tabs a').forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + r ? 'page' : 'false'));
   if (cur().A && !['schedule', 'dashboard'].includes(r)) evaluateNow();

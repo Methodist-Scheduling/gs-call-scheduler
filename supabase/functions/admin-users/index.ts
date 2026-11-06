@@ -32,12 +32,15 @@ Deno.serve(async (req) => {
       if (!ROLES.includes(body.role)) return json({ error: 'Pick a role.' }, 400);
       if (username) { const { data: taken } = await admin.from('profiles').select('id').eq('username', username).maybeSingle();
       if (taken) return json({ error: 'That username is taken.' }, 400); }
+      // no email (e.g. a test account): use a placeholder address and hand back a link to copy; nothing is emailed
+      const email = String(body.email || '').trim() || `user-${crypto.randomUUID().slice(0, 8)}@no-email.example.com`;
+      if (!body.email && body.send_email) return json({ error: 'No email given: uncheck “Email them the setup link” and copy the link instead.' }, 400);
       let userId: string, link: string | null = null;
       if (body.send_email) {
-        const { data, error } = await admin.auth.admin.inviteUserByEmail(body.email, { redirectTo: site });
+        const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo: site });
         if (error) return json({ error: error.message }, 400); userId = data.user.id;
       } else {
-        const { data, error } = await admin.auth.admin.generateLink({ type: 'invite', email: body.email, options: { redirectTo: site } });
+        const { data, error } = await admin.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo: site } });
         if (error) return json({ error: error.message }, 400); userId = data.user.id; link = data.properties.action_link;
       }
       const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin, roster_name: body.roster_name ? String(body.roster_name).trim() : null });
