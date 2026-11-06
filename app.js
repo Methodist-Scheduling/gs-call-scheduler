@@ -143,7 +143,7 @@ function save(k) {
   saveSettings();
 }
 function saveSettings() {
-  if (!['scheduler', 'chief'].includes(S.realRole)) return;
+  if (!['scheduler', 'chief', 'pd'].includes(S.realRole)) return;
   clearTimeout(settingsTimer); settingsTimer = setTimeout(async () => { pendingOwn++; const { error } = await sb.from('settings').update({ rules: S.rules, trio_swap: S.trioSwap, people: S.people }).eq('id', 1); setTimeout(() => pendingOwn--, 1500); if (error) toast('Settings not saved: ' + error.message); }, 700);
 }
 function logEvent(k, text) { S.M[k].log.push({ at: new Date().toISOString(), role: roleName(), text: (me.name ? me.name + ': ' : '') + text }); sb.from('activity_log').insert({ user_id: me.id, month_key: k, text: `${me.name} (${roleName()}): ${text}` }).then(() => {}); }
@@ -592,7 +592,7 @@ function rulesCatalogHTML() {
   + `<div class="panel" id="rguide" style="margin-top:14px"><h3 style="margin-top:0">How to use this app</h3>${RC.guide.map(s => `<h4 style="margin:12px 0 4px">${esc(s.title)}</h4><ol class="small" style="margin:0;padding-left:20px">${s.steps.map(t => `<li style="margin:3px 0">${esc(t)}</li>`).join('')}</ol>`).join('')}</div>`;
 }
 function viewRules() {
-  const R = S.rules, t = R.targets, dis = isScheduler() ? '' : 'disabled';
+  const R = S.rules, t = R.targets, dis = isScheduler() || S.role === 'Program Director' ? '' : 'disabled'; // the PD can change any rule setting
   const tr = (k, label) => `<tr><td>${label}</td><td><input type="number" min="0" max="12" data-t="${k}" data-i="0" value="${t[k][0]}" ${dis} aria-label="${label} minimum"></td><td><input type="number" min="0" max="12" data-t="${k}" data-i="1" value="${t[k][1]}" ${dis} aria-label="${label} maximum"></td></tr>`;
   const p4 = Object.keys(DATA.pgy).filter(n => DATA.pgy[n] === 4);
   return `<div class="row"><h2>Rules</h2><span class="muted small">Rules ${esc(RC.version)} (v1.1 PD approved Nov 5; v1.3 changes pending PD sign-off). Settings first, then every rule in plain English, then a how-to guide.</span></div>
@@ -601,8 +601,8 @@ function viewRules() {
     <table style="max-width:420px"><thead><tr><th>Group</th><th>Min</th><th>Max</th></tr></thead><tbody>${tr(1, 'Interns')}${tr(2, 'PGY-2')}${tr(3, 'PGY-3')}${tr(4, 'PGY-4')}${tr(5, 'PGY-5')}${tr('F', 'Fellow')}</tbody></table>
     <h3 style="margin-top:16px">Limits</h3><div class="kv"><label for="rCap">Fellow cap (H7)</label><input id="rCap" type="number" min="0" max="10" value="${R.fellowCap}" ${dis}><label for="rQ2">Max calls in a row, every other day (H14)</label><input id="rQ2" type="number" min="1" max="6" value="${R.maxQ2Run}" ${dis}><label for="rHrs">Call length for hour estimates</label><input id="rHrs" type="number" min="12" max="36" value="${R.callHours}" ${dis}></div></div>
   <div style="display:grid;gap:14px">
-    <div class="panel small"><h3>Two-person call exceptions (H3)</h3><p class="muted">Not eligible for two-person call until a PGY-5 chief removes them.</p>
-      ${p4.map(n => `<label class="row"><input type="checkbox" data-ntp="${esc(n)}" ${(R.noTwoPerson || []).includes(n) ? 'checked' : ''} ${S.role === 'Chief' ? '' : 'disabled'}> ${esc(n)}</label>`).join('')}</div>
+    <div class="panel small"><h3>Two-person call exceptions (H3)</h3><p class="muted">Not eligible for two-person call until a PGY-5 chief or the PD removes them.</p>
+      ${p4.map(n => `<label class="row"><input type="checkbox" data-ntp="${esc(n)}" ${(R.noTwoPerson || []).includes(n) ? 'checked' : ''} ${S.role === 'Chief' || S.role === 'Program Director' ? '' : 'disabled'}> ${esc(n)}</label>`).join('')}</div>
     <div class="panel small"><h3>Open question</h3><label class="row" style="align-items:flex-start;gap:8px"><input type="checkbox" id="rSS" ${R.sameServiceBlocked ? 'checked' : ''} ${dis}><span><b>Two residents on the same service never share a call day.</b> Not in the rules (H15 covers sister services only). Happened 6 times Jul–Nov.</span></label></div>
     <div class="panel small"><h3>Always on</h3><p class="muted">ACGME limits, H1–H15 (a PGY-4 never fills the mid slot), holiday trios, vacation and leave, excluded rotations (Richardson, Peds, Transplant), Fri/Sat/Sun callers work that weekend's rounding (H9). Rounding counts as a worked weekend (S5, F2, S7: avoid back-to-back weekends). Fill-in rounders rotate (cross-cover first if the service's resident worked last weekend); one resident covers HPB and Transplant, two when feasible (W2); the SICU fellow and the ICU resident alternate ICU weekends, fellow two a month; each one's off weekend is fully off, no call (W3). Locked picks and the holiday list decide whose weekend it is when they can. T/EGS residents PGY-3 and up alternate weekends, each with a lower level; off weekend fully off (W6). If an ICU partner or a T/EGS PGY-3+ partner is away, the other isn't post-call on weekdays (H16). Big colorectal days are Mon/Wed (S3).</p>
       <button class="btn primary" id="rulesApply" ${canEdit() ? '' : 'disabled'}>Rebuild with these rules</button></div></div></div>
