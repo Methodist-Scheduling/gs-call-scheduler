@@ -134,7 +134,7 @@
       const st = { seedA: JSON.stringify(ref.pre.A), sentOnce: false, pdBusy: false, revised: false, swapsMade: false };
       let fake;
       const month = () => T.months.find(m => m.key === '2026-12');
-      const msg = (title, body) => { const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.innerHTML = `<div class="modal"><div class="pill" style="margin-bottom:8px">Practice</div><h3 style="margin-top:0">${title}</h3><p class="small">${body}</p><div class="row" style="justify-content:flex-end"><button class="btn primary">OK</button></div></div>`; document.body.appendChild(ov); ov.querySelector('button').onclick = () => ov.remove(); ov.onclick = e => { if (e.target === ov) ov.remove(); }; };
+      const msg = (title, body) => { const ov = document.createElement('div'); ov.className = 'modal-ov pmsg'; ov.innerHTML = `<div class="modal"><div class="pill" style="margin-bottom:8px">Practice</div><h3 style="margin-top:0">${title}</h3><p class="small">${body}</p><div class="row" style="justify-content:flex-end"><button class="btn primary">OK</button></div></div>`; document.body.appendChild(ov); ov.querySelector('button').onclick = () => ov.remove(); ov.onclick = e => { if (e.target === ov) ov.remove(); }; };
       const nameOf = (A, d, s) => A[d - 1] && A[d - 1][s === 'U' ? 0 : s === 'M' ? 1 : 2];
       const weekdays = () => Array.from({ length: 31 }, (_, i) => i + 1).filter(d => { const w = new Date(2026, 11, d).getDay(); return w >= 1 && w <= 4 && d < 22; });
 
@@ -234,7 +234,10 @@
       ban.innerHTML = `<b>PRACTICE</b> — nothing here is real or saved. Reload or “Reset practice” to start over.`;
       document.body.prepend(ban);
       const box = document.createElement('aside'); box.className = 'coach'; box.setAttribute('aria-label', 'Practice walkthrough'); document.body.appendChild(box);
-      let collapsed = false;
+      const phone = () => window.matchMedia('(max-width: 720px)').matches;
+      let collapsed = phone(); // on phones the checklist starts as a slim bar at the top; tap it to open
+      const away = e => { if (phone() && !collapsed && !box.contains(e.target)) { collapsed = true; refresh(); } };
+      document.addEventListener('click', away, true); document.addEventListener('touchstart', away, { capture: true, passive: true });
       function refresh() {
         const h = location.hash.slice(1) || 'schedule'; visited.add(h);
         if (kind === 'sched') {
@@ -252,22 +255,23 @@
         const next = steps.find(s => !done.has(s.id)), n = steps.filter(s => done.has(s.id)).length;
         document.querySelectorAll('nav.tabs a').forEach(a => a.classList.toggle('coach-next', !!next && a.getAttribute('href') === '#' + next.tab && !collapsed));
         box.classList.toggle('min', collapsed);
-        const html = `<div class="coach-h"><b>Practice walkthrough</b><span class="muted small">${n}/${steps.length}</span><span class="spacer"></span><button class="btn" data-c="min" aria-label="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '▴' : '▾'}</button></div>
+        const html = `<div class="coach-h" ${collapsed ? 'data-c="min" role="button" tabindex="0"' : ''}><b>${collapsed ? 'Practice' : 'Practice walkthrough'}</b><span class="muted small">${n}/${steps.length}</span>${collapsed && next ? `<span class="coach-now">→ ${next.t}</span>` : collapsed ? '<span class="coach-now">✓ All done</span>' : ''}<span class="spacer"></span><button class="btn" ${collapsed ? '' : 'data-c="min"'} aria-label="${collapsed ? 'Show steps' : 'Hide steps'}">${collapsed ? 'Show' : 'Hide'}</button></div>
           ${collapsed ? '' : `<ol class="coach-list">${steps.map(s => `<li class="${done.has(s.id) ? 'ok' : s === next ? 'now' : ''}">${done.has(s.id) ? '✓' : s === next ? '→' : '·'} ${s.t}${s === next ? `<div class="small">${s.d}${s.tab && h !== s.tab ? ` <a href="#${s.tab}">Go there</a>` : ''}</div>` : ''}</li>`).join('')}</ol>
           ${next ? '' : '<p class="small"><b>That’s the whole loop.</b> Poke around anything else, or reset to try another path.</p>'}
           <div class="row small" style="gap:6px;margin-top:8px"><button class="btn" data-c="reset">Reset practice</button>${canLeave ? '<button class="btn" data-c="leave">Leave practice</button>' : ''}</div>`}`;
         if (html === box._last) return; box._last = html; box.innerHTML = html;
-        box.querySelector('[data-c="min"]').onclick = () => { collapsed = !collapsed; refresh(); };
+        box.querySelector('[data-c="min"]').onclick = e => { e.stopPropagation(); collapsed = !collapsed; refresh(); };
         const r = box.querySelector('[data-c="reset"]'); if (r) r.onclick = () => location.reload();
         const l = box.querySelector('[data-c="leave"]'); if (l) l.onclick = () => { try { sessionStorage.removeItem('gs-practice'); } catch (e) {} location.hash = '#schedule'; location.reload(); };
       }
-      window.addEventListener('hashchange', () => setTimeout(refresh, 50));
+      window.addEventListener('hashchange', () => { if (phone()) collapsed = true; setTimeout(refresh, 50); });
       setTimeout(refresh, 300); setInterval(refresh, 1500);
+      const where = phone() ? 'the purple bar at the top; tap it' : 'bottom right';
       setTimeout(() => msg(`Welcome to practice, ${String(profile.display_name || '').split(' ')[0]}`, kind === 'res'
-        ? 'This is a private practice copy: try anything, nothing is saved or seen by anyone. December is published. The checklist (bottom right) shows you how to find your calls, ask for a day off, and trade calls. Pretend residents and schedulers answer in about 10 seconds.'
+        ? `This is a private practice copy: try anything, nothing is saved or seen by anyone. December is published. The checklist (${where}) shows you how to find your calls, ask for a day off, and trade calls. Pretend residents and schedulers answer in about 10 seconds.`
         : kind === 'pd'
-        ? 'This is a private practice copy: try anything, nothing is saved or seen by anyone. The schedulers just sent you December. The checklist (bottom right) walks you through approving it and entering the month’s attendings.'
-        : 'This is a private practice copy: try anything, nothing is saved or seen by anyone. Five residents have sent requests for December. The checklist (bottom right) walks you through building, sending to the PD, publishing and handling swaps. Pretend people answer in about 10 seconds.'), 600);
+        ? `This is a private practice copy: try anything, nothing is saved or seen by anyone. The schedulers just sent you December. The checklist (${where}) walks you through approving it, making requests and entering the month’s attendings.`
+        : `This is a private practice copy: try anything, nothing is saved or seen by anyone. Five residents have sent requests for December. The checklist (${where}) walks you through building, sending to the PD, publishing and handling swaps. Pretend people answer in about 10 seconds.`), 600);
       return { sb: fake, profile: me, months: clone(T.months), versions: clone(T.versions).map(v => Object.assign({}, v)), logs: clone(T.activity_log) };
     }
   };

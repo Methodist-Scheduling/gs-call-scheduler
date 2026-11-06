@@ -203,8 +203,8 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
   .kv > label { margin-top: 6px; }
   /* sheets and popups */
   .drawer { inset: auto 0 0 0; width: 100%; max-height: 85vh; border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; box-shadow: 0 -8px 30px rgb(0 0 0 / .2); }
-  .modal-ov { padding: 8px; align-items: end; }
-  .modal { width: 100%; max-height: 90vh; overflow-y: auto; border-radius: 14px 14px 10px 10px; }
+  .modal-ov { padding: 12px; align-items: center; }
+  .modal { width: 100%; max-height: 85vh; overflow-y: auto; border-radius: 12px; }
   .mc-d { min-height: 38px; font-size: 11px; padding: 2px 3px; }
   .mc-d.call i { font-size: 9px; }
   #toast { left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); transform: none; max-width: none; text-align: center; font-size: 14px; padding: 12px 14px; line-height: 1.35; word-wrap: break-word; }
@@ -269,7 +269,7 @@ td.clk { cursor: pointer; } td.clk:hover { text-decoration: underline dotted; }
 /* practice mode */
 .practice-banner { position: relative; z-index: 1; background: #6b2fd6; color: #fff; text-align: center; padding: 6px 12px; font-size: 13px; }
 html.practice header.top { border-top: 4px solid #6b2fd6; }
-.coach { position: fixed; right: 16px; bottom: 16px; z-index: 70; width: 340px; max-height: 70vh; overflow: auto; background: var(--panel); color: var(--ink); border: 2px solid #6b2fd6; border-radius: 12px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); font-size: 13.5px; }
+.coach { position: fixed; right: 16px; bottom: 16px; z-index: 15; width: 340px; max-height: 70vh; overflow: auto; background: var(--panel); color: var(--ink); border: 2px solid #6b2fd6; border-radius: 12px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); font-size: 13.5px; }
 .coach.min { width: auto; }
 .coach-h { display: flex; align-items: center; gap: 8px; } .coach-h .btn { padding: 0 8px; }
 .coach-list { margin: 8px 0 0; padding-left: 4px; list-style: none; display: grid; gap: 6px; }
@@ -277,7 +277,19 @@ html.practice header.top { border-top: 4px solid #6b2fd6; }
 .coach-list li.now .small { font-weight: 400; margin-top: 3px; line-height: 1.4; }
 nav.tabs a.coach-next { outline: 2px solid #6b2fd6; outline-offset: -2px; border-radius: 6px; animation: coachPulse 1.6s ease-in-out infinite; }
 @keyframes coachPulse { 50% { background: rgba(107,47,214,.15); } }
-@media (max-width: 720px) { .coach { left: 8px; right: 8px; width: auto; bottom: 8px; max-height: 45vh; } }
+@media (max-width: 720px) {
+  /* phones: the checklist is a slim bar pinned to the top; tap it to open; it closes when you tap the page or change tabs */
+  html.practice body { padding-top: 46px; }
+  .practice-banner { display: none; }
+  .coach { top: 0; left: 0; right: 0; bottom: auto; width: auto; max-height: 65vh; border-radius: 0 0 12px 12px; border-width: 0 0 3px 0; padding: 8px 12px; }
+  .coach.min { max-height: none; }
+  .coach-h { min-height: 30px; }
+  .coach-now { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  .modal-ov.pmsg { align-items: center; }
+  .modal-ov.pmsg .modal { border-radius: 12px; }
+}
+.coach.min .coach-h { cursor: pointer; }
+.coach-now { font-size: 13px; }
 
 .addform .checkcell { display: flex; align-items: flex-start; gap: 8px; margin: 0; white-space: normal !important; line-height: 1.4; }
 .addform .checkcell input { flex: none; width: auto; margin: 3px 0 0; }
