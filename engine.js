@@ -259,8 +259,9 @@
       // the SICU fellow never cross-covers; she rounds only ICU, only on her weekends
       const all = [...new Set(callDays.map(d => A[d - 1]).filter(Boolean).flatMap(a => [a.I, a.M, a.U]).filter(Boolean))];
       const callers = all.filter(n => !P.byName[n] || P.byName[n].lvl !== 'F');
-      // Holidays (and holiday weekends): only that day's callers round, each on their own service when possible,
-      // the rest spread across the empty services. Everyone else is off: no fill-ins, no alternation.
+      // Holidays (and holiday weekends) work like a weekend with a fixed pool: everyone working the holiday
+      // (on call that day or post-call from the night before) rounds, own service first, the rest spread across
+      // the empty services. Everyone else is off: no fill-ins, no alternation.
       if (refHoliday) {
         all.forEach(n => { const p = P.byName[n]; if (!p) return; const k = p.lvl === 'F' ? 'ICU' : blockOf(p); if (k && !b[k].length) b[k].push(n); });
         all.forEach(n => { if (placed(n) || !P.byName[n]) return; const k = Object.keys(b).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
@@ -324,12 +325,15 @@
       const holWk = (holidays || []).some(d => days.includes(d));   // e.g. the Christmas/New Year's weekend: holiday rules
       const fw = !holWk && FW.has(i);
       const tUp = !holWk && tUppers.length >= 2 ? tOn(i, tOff) : null;
-      const rec = applyOvr(build(days, w.ref, prevWorkers, fw, holWk, tUp), w.ref); if (holWk) rec.holiday = true;
+      // holiday weekend: whoever is post-call on the holiday Friday (Thursday's callers) rounds too
+      const cDays = holWk && days[0] > 1 && (holidays || []).includes(days[0]) ? [days[0] - 1, ...days] : days;
+      const rec = applyOvr(build(cDays, w.ref, prevWorkers, fw, holWk, tUp), w.ref); if (holWk) rec.holiday = true;
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
     void fellowRounds;
-    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = applyOvr(build([d], d, new Set(), false, true), d); rec.holiday = true; out[d] = rec; });
+    // weekday holidays: that day's callers + whoever is post-call from the night before
+    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = applyOvr(build(d > 1 ? [d - 1, d] : [d], d, new Set(), false, true), d); rec.holiday = true; out[d] = rec; });
     return out;
   }
 

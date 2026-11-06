@@ -215,7 +215,7 @@ function calendarHTML(A, k, o) {
       const n = a[s], key = d + s, est = o.est && o.est[key], lk = o.locked ? o.locked(d, s, n) : '';
       if (!n) return `<button class="chip empty" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'}>${s === 'M' ? 'two-person call' : 'no ' + SLOTNAME[s].toLowerCase()}</button>`;
       const fl = o.flags && o.flags[d + '|' + s];
-      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
+      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${lk === 'holiday' ? ' · locked: holiday list' : lk === 'locked' ? ' · locked' : ''}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk === 'holiday' || lk === 'locked' ? '🔒' : lk}</span>` : ''}</button>`;
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     if (o.mine && ![a.U, a.M, a.I].includes(o.mine) && !(rl && rl.some(t => new RegExp('\\b' + o.mine + '\\b').test(t)))) return;
@@ -245,7 +245,7 @@ function roundingTable(recs, recLabel, BL, k) {
   const st = cur(), ed = canEdit() && adminView(), roster = ROSTER_NAMES().filter(n => CUR.P.byName[n] && !CUR.P.byName[n].excluded || CUR.P.byName[n] && ['Transplant'].includes(CUR.P.byName[n].rotation));
   return `<div class="tablewrap"><table class="rtable"><thead><tr><th>Days</th>${BL.map(b => `<th>${b}</th>`).join('')}${ed ? '<th></th>' : ''}</tr></thead><tbody>${recs.map(x => { const ref = x.d, edits = (st.rndEdit || {})[ref] || {};
     return `<tr><td>${recLabel(x)}</td>${BL.map(b => { const v = x.r.blocks[b] || [];
-      const tags = v.map((n, i) => { const why = adminView() ? rndIssue(n, x.r, ref, b, recs) : ''; return `<span class="rtag ${why ? 'bad' : ''}" title="${esc(why)}">${esc(n.replace(' (cross-cover)', '*'))}${why ? ' ⛔' : ''}${ed ? `<button class="rx" data-rx="${ref}|${b}|${i}" aria-label="Remove ${esc(n)}">✕</button>` : ''}</span>`; }).join(' ');
+      const tags = v.map((n, i) => { const why = adminView() ? rndIssue(n, x.r, ref, b, recs) : ''; return `<span class="rtag ${why ? 'bad' : ''}" ${why ? `data-tip="${esc(why)}"` : ''}>${esc(n.replace(' (cross-cover)', '*'))}${why ? `<button class="why" data-why="${esc(why)}" aria-label="Why is this red?">⛔</button>` : ''}${ed ? `<button class="rx" data-rx="${ref}|${b}|${i}" aria-label="Remove ${esc(n)}">✕</button>` : ''}</span>`; }).join(' ');
       const add = ed ? `<select class="radd" data-ra="${ref}|${b}" aria-label="Add to ${b}"><option value="">+</option>${roster.filter(n => !v.some(m => m.replace(' (cross-cover)', '') === n)).map(n => { const why = rndIssue(n, x.r, ref, b, recs); return `<option value="${esc(n)}">${esc(n)}${why ? ' — ' + esc(why) : ''}</option>`; }).join('')}</select>` : '';
       return `<td class="${edits[b] ? 'edited' : ''}">${tags || '<span class="muted">—</span>'} ${add}</td>`; }).join('')}${ed ? `<td>${Object.keys(edits).length ? `<button class="btn" data-rreset="${ref}" style="padding:1px 8px" title="Undo your edits for this weekend">Reset</button>` : ''}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>`;
 }
@@ -871,6 +871,10 @@ function wire() {
   const mt = $('#mineT'); if (mt) mt.onchange = () => { MINE = mt.checked; try { localStorage.setItem('gs-mine', MINE ? '1' : '0'); } catch (e) {} render(); };
   document.querySelectorAll('[data-jump]').forEach(el => el.onclick = e => { e.preventDefault(); const t = document.getElementById(el.dataset.jump); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   document.querySelectorAll('[data-rc]').forEach(el => el.onclick = () => showRuleCheck(el.dataset.rc));
+  document.querySelectorAll('[data-tip]').forEach(el => { el.onmouseenter = () => { let t = $('#tipbox'); if (!t) { t = document.createElement('div'); t.id = 'tipbox'; document.body.appendChild(t); }
+    t.textContent = el.dataset.tip; t.style.display = 'block'; const r = el.getBoundingClientRect(); t.style.left = Math.max(8, Math.min(r.left, innerWidth - t.offsetWidth - 8)) + 'px'; t.style.top = (r.bottom + 6 + t.offsetHeight > innerHeight ? r.top - t.offsetHeight - 6 : r.bottom + 6) + 'px'; };
+    el.onmouseleave = () => { const t = $('#tipbox'); if (t) t.style.display = 'none'; }; });
+  document.querySelectorAll('[data-why]').forEach(el => el.onclick = e => { e.stopPropagation(); toast('⛔ ' + el.dataset.why); });
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-rreset]').forEach(el => el.onclick = () => { const st2 = cur(); delete st2.rndEdit[el.dataset.rreset]; logEvent(S.month, 'Reset rounding edits'); save(); render(); });
