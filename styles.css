@@ -234,3 +234,9 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
 
 .chip .chg { color: var(--accent); font-weight: 800; }
 .minical .mc-d i.rd { color: var(--accent); font-style: normal; font-size: 9.5px; }
+
+/* color-blind-safe better/worse (blue/orange + arrows) */
+:root { --better: #1d5fd1; --worse: #c25e00; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --better: #7fb0ff; --worse: #ffab5c; } }
+:root[data-theme="dark"] { --better: #7fb0ff; --worse: #ffab5c; }
+.better { color: var(--better); font-weight: 700; } .worse { color: var(--worse); font-weight: 700; }
