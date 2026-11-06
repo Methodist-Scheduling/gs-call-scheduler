@@ -51,10 +51,11 @@
       e.preventDefault(); const err = document.getElementById('perr'); err.textContent = '';
       if (!onlyUsername) { const a = document.getElementById('p1').value, b = document.getElementById('p2').value;
         if (a !== b) { err.textContent = 'The two passwords don’t match.'; return; } }
-      if (needUser) { const { data: msg, error: ue } = await sb.rpc('claim_username', { u: document.getElementById('pu').value });
-        if (ue || msg !== 'ok') { err.textContent = (ue && ue.message) || msg; return; } }
+      // password first, then username: if the username step fails they're asked again, and nobody ends up with a username but no password
       if (!onlyUsername) { const { error } = await sb.auth.updateUser({ password: document.getElementById('p1').value });
         if (error) { err.textContent = error.message; return; } }
+      if (needUser) { const { data: msg, error: ue } = await sb.rpc('claim_username', { u: document.getElementById('pu').value });
+        if (ue || msg !== 'ok') { err.textContent = (ue && ue.message) || msg; return; } }
       history.replaceState(null, '', location.pathname + '#schedule'); boot();
     };
   }
@@ -91,7 +92,7 @@
     if (!user) return showLogin();
     const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
     if (!profile) { card('<p>Your login works, but your account isn’t set up in the scheduler yet. Ask an admin.</p><button class="btn" id="so">Sign out</button>'); document.getElementById('so').onclick = () => sb.auth.signOut().then(() => location.reload()); return; }
-    if (!profile.username) return showSetPassword(false, true); // invited people pick their own username
+    if (!profile.username) return showSetPassword(true); // not set up yet: pick username AND password before getting in
     if (!profile.active) { card('<p>This account is turned off. Ask an admin if that’s a mistake.</p><button class="btn" id="so">Sign out</button>'); document.getElementById('so').onclick = () => sb.auth.signOut().then(() => location.reload()); return; }
     const [refQ, setQ, monQ, verQ, logQ] = await Promise.all([
       sb.from('reference').select('key,value'),

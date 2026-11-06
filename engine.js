@@ -143,8 +143,14 @@
         bookBroken = (bb ? 1 : 0) + (ab ? 1 : 0);
         if (bookBroken) { const v = bookBroken === 2 ? W.bookend * 3 : W.bookend; soft += v; br.S4 = (br.S4 || 0) + v; }
       }
+      // H16: when an ICU partner (fellow / ICU resident) or a T/EGS upper-level partner is away, the one left can't be post-call on a weekday
+      const away = (q, d) => q.vacAll.has(d) || (q.leaveDays || []).includes(d);
+      const grp = p.rotation === 'ICU' ? P.people.filter(q => q.rotation === 'ICU' && !q.excluded)
+        : (['Trauma', 'EGS'].includes(p.rotation) && p.pgy >= 3 && p.lvl !== 'F') ? P.people.filter(q => ['Trauma', 'EGS'].includes(q.rotation) && q.pgy >= 3 && q.lvl !== 'F' && !q.excluded) : [];
+      if (grp.length > 1) c.forEach(d => { const nx = P.days[d]; if (!nx || nx.w < 1 || nx.w > 5) return;
+        const gone = grp.find(q => q !== p && away(q, d + 1)); if (gone) add('H16', 1e6, `${p.name}: post-call on day ${d + 1} while ${gone.name} is away`, 'hard'); });
       // GS2 colorectal (S3)
-      if (p.rotation === 'GS2') c.forEach(d => { const w = P.days[d - 1].w; const marked = (input.colorectalDays || []).includes(d + 1); if (marked) add('S3', 1e6, `${p.name}: post-call on marked colorectal day ${d + 1}`, 'hard'); else if (w === 0 || w === 1) { soft += W.gs2; br.S3 = (br.S3 || 0) + W.gs2; } });
+      if (p.rotation === 'GS2') c.forEach(d => { const w = P.days[d - 1].w; const marked = (input.colorectalDays || []).includes(d + 1); if (marked) add('S3', 1e6, `${p.name}: post-call on marked colorectal day ${d + 1}`, 'hard'); else if (w === 0 || w === 2) { soft += W.gs2; br.S3 = (br.S3 || 0) + W.gs2; } });
       // protected (S2)
       (input.protected || []).forEach(ev => { if ((ev.names || []).includes(p.name) && c.includes(ev.day - 1)) { soft += W.protected; br.S2 = (br.S2 || 0) + W.protected; } });
       // requests (S6)
