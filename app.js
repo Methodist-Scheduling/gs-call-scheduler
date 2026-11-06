@@ -20,7 +20,7 @@ const S = {
   rules: { pgy4MidSlot: false, sameServiceBlocked: false, noTwoPerson: [], fellowCap: 4, maxQ2Run: 3, callHours: 24, targets: { 1: [5, 6], 2: [5, 6], 3: [5, 6], 4: [6, 7], 5: [6, 6], F: [4, 4] } },
   trioSwap: { xmas: false, ny: false },
   people: {}, // leave dates by name (stored in the database, not here)
-  M: {}
+  M: {}, requests: [], notes: {}
 };
 function blankMonth(k) {
   const inputs = {};
@@ -71,7 +71,7 @@ function buildInput(k) {
   holidayLocks(k).forEach(([d, t]) => { inp.locks.push({ day: d, slot: 'U', name: t[2] }, { day: d, slot: 'M', name: t[1] }, { day: d, slot: 'I', name: t[0] }); });
   picksOf(k).forEach(p => { if (!inp.locks.some(l => l.day === p.day && l.slot === 'U')) inp.locks.push({ day: p.day, slot: 'U', name: p.name }); });
   Object.entries(st.locks).forEach(([kk, name]) => { const [d, s] = kk.split('|'); if (!inp.locks.some(l => l.day === +d && l.slot === s)) inp.locks.push({ day: +d, slot: s, name: name || null }); });
-  st.constraints.forEach(c => {
+  cons(k).forEach(c => {
     if (c.type === 'off' || c.type === 'want') c.days.forEach(d => inp.requests.push({ name: c.name, day: d, type: c.type }));
     if (c.type === 'protected') c.days.forEach(d => inp.protected.push({ day: d, names: [c.name], label: c.reason }));
     if (c.type === 'colorectal') c.days.forEach(d => inp.colorectalDays.push(d));
@@ -110,11 +110,11 @@ function generate(keepLocks, k) {
 }
 
 // ---------- persistence (Supabase) ----------
-function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, constraints: st.constraints, notesText: st.notesText, inputs: st.inputs }; }
+function monthData(k) { const st = S.M[k]; return { A: st.A ? st.A.map(a => [a.U, a.M, a.I]) : null, locks: st.locks, inputs: st.inputs }; } // requests and notes live in their own tables
 function adoptMonth(row) {
   const k = row.key; if (!S.M[k]) return; const st = S.M[k], d = row.data || {};
   if (d.A) st.A = d.A.map(([U, M, I]) => ({ U, M, I }));
-  ['locks', 'constraints', 'notesText', 'inputs'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
+  ['locks', 'inputs'].forEach(x => { if (d[x] !== undefined) st[x] = d[x]; });
   st.status = row.status || st.status; existing.add(k);
 }
 function adoptSettings(r) { if (!r) return; if (r.rules && Object.keys(r.rules).length) S.rules = Object.assign(S.rules, r.rules); if (r.trio_swap) S.trioSwap = r.trio_swap; if (r.people && Object.keys(r.people).length) S.people = r.people; }
@@ -139,13 +139,27 @@ const roleKey = r => ({ Scheduler: 'scheduler', Chief: 'chief', 'Program Directo
 const roleName = () => ({ Scheduler: 'Scheduler', Chief: 'PGY-5 chief', 'Program Director': 'PD', Resident: 'Resident' }[S.role]);
 function connect() {
   sb.channel('board').on('postgres_changes', { event: '*', schema: 'public', table: 'months' }, p => { if (pendingOwn || !p.new) return; applyingRemote = true; adoptMonth(p.new); applyingRemote = false; render(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); }).subscribe();
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); }).subscribe();
 }
 (CTX.months || []).forEach(adoptMonth);
 adoptSettings(CTX.settings);
 (CTX.versions || []).forEach(v => { const st = S.M[v.month_key]; if (st) st.versions.push({ n: v.n, at: v.created_at, status: v.status, A: v.schedule, changed: v.changed }); });
 (CTX.logs || []).slice().reverse().forEach(l => { const st = S.M[l.month_key]; if (st) st.log.push({ at: l.at, role: '', text: l.text }); });
 if (['scheduler', 'chief'].includes(S.realRole) && !existing.has('2026-12') && S.M['2026-12'].A) save('2026-12');
+
+const ROSTER_NAMES = () => Object.keys(DATA.pgy || {}).sort((x, y) => order(x) - order(y) || x.localeCompare(y));
+// ---------- requests (own table; residents only ever load their own) ----------
+const cons = k => S.requests.filter(r => r.month_key === k && r.status === 'accepted').map(r => ({ id: r.id, type: r.type, name: r.resident, days: r.days, reason: r.note, source: r.source }));
+async function loadRequests() { const { data, error } = await sb.from('requests').select('*').order('created_at'); if (!error) S.requests = data || []; }
+async function loadNotes() { if (!adminView() && !S.isAdmin) return; const { data } = await sb.from('month_notes').select('*'); (data || []).forEach(r => S.notes[r.key] = r.notes_text); }
+let notesTimer = null;
+function saveNotes(k) { clearTimeout(notesTimer); notesTimer = setTimeout(() => sb.from('month_notes').upsert({ key: k, notes_text: S.notes[k] || '', updated_at: new Date().toISOString() }).then(({ error }) => { if (error) toast('Notes not saved: ' + error.message); }), 600); }
+async function addRequest(row) { const { data, error } = await sb.from('requests').insert(row).select().single(); if (error) { toast('Not saved: ' + error.message); return null; } if (!S.requests.some(r => r.id === data.id)) S.requests.push(data); return data; }
+async function setRequest(id, patch) { const { error } = await sb.from('requests').update(patch).eq('id', id); if (error) return toast('Not saved: ' + error.message); Object.assign(S.requests.find(r => r.id === id) || {}, patch); }
+async function dropRequest(id) { const { error } = await sb.from('requests').delete().eq('id', id); if (error) return toast('Not removed: ' + error.message); S.requests = S.requests.filter(r => r.id !== id); }
+const reqDeadline = k => { const [y, m] = ym(k); return new Date(y, m - 2, 15, 23, 59); }; // mid-month before the schedule month
+const isLate = r => new Date(r.created_at) > reqDeadline(r.month_key);
 
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
@@ -241,7 +255,7 @@ function softDetail(k, ev) {
   if (k === 'F4') return 'two-person call uneven across PGY-4s';
   return '';
 }
-function requestMisses() { const st = cur(), out = []; st.constraints.forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push(`${c.name} ${MONTHS[ym(S.month)[1] - 1]} ${d}`); }); }); return out; }
+function requestMisses() { const st = cur(), out = []; cons(S.month).forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push(`${c.name} ${MONTHS[ym(S.month)[1] - 1]} ${d}`); }); }); return out; }
 
 function viewInputs() {
   const k = S.month, st = cur(), ed = isScheduler() && st.status !== 'Published';
@@ -307,7 +321,7 @@ function improvements(ev, P, ppl) {
   requestMissDetail().forEach(r => { const p = P.byName[r.name]; out.push({ t: `Request missed: ${r.name} ${MONTHS[ym(k)[1] - 1]} ${r.day} (${r.type === 'off' ? 'asked off' : 'wanted call'}).`, name: r.name, calls: st[r.name] ? st[r.name].calls : [], vac: p ? [...p.vacAll] : [], flag: [r.day], note: r.type === 'off' ? 'Red = the day they asked off but are on call.' : 'Red = the day they wanted call.' }); });
   return out;
 }
-function requestMissDetail() { const st = cur(), out = []; st.constraints.forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push({ name: c.name, day: d, type: c.type }); }); }); return out; }
+function requestMissDetail() { const st = cur(), out = []; cons(S.month).forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push({ name: c.name, day: d, type: c.type }); }); }); return out; }
 let IMPROVE = [];
 function showImprove(x) {
   const k = S.month, [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
@@ -345,25 +359,51 @@ function viewHistory() {
 }
 
 function viewNotes() {
-  const st = cur(), roster = Object.keys(st.inputs), mn = MONTHS_LONG[ym(S.month)[1] - 1];
-  return `<div class="row"><h2>Notes for Claude · ${mn}</h2><span class="muted small">Write requests in plain English. Claude turns each into a rule, a scheduler accepts it, then the app rebuilds. The schedule never needs notes to be built.</span></div>
-  <div class="grid2"><div class="panel"><label for="notes" class="small muted">Notes (requests come in by text; paste them here)</label>
-    <textarea id="notes">${esc(st.notesText)}</textarea>
-    <div class="row" style="margin-top:10px"><button class="btn primary" id="interpret" ${sample ? '' : 'disabled'}>Interpret with Claude</button><span class="small muted">${sample ? 'Each note becomes a proposed rule below. Nothing changes until a scheduler accepts it.' : 'Claude isn’t available in this view. Add rules by hand on the right.'}</span></div>
+  if (!adminView()) return viewRequests();
+  const st = cur(), k = S.month, roster = Object.keys(st.inputs), mn = MONTHS_LONG[ym(k)[1] - 1], C = cons(k);
+  const pend = S.requests.filter(r => r.month_key === k && r.status === 'pending'), denied = S.requests.filter(r => r.month_key === k && r.status === 'denied');
+  const otherPend = S.requests.filter(r => r.month_key !== k && r.status === 'pending').length;
+  return `<div class="row"><h2>Notes for Claude · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
+  <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
+    ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
+      <div class="row" style="margin-top:6px;gap:6px">${isScheduler() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px"><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button>` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
+  <div class="grid2"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
+    <textarea id="notes">${esc(S.notes[k] || '')}</textarea>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="interpret" ${sample ? '' : 'disabled'}>Interpret with Claude</button><span class="small muted">${sample ? 'Each note becomes a proposed rule below. Nothing changes until a scheduler accepts it.' : 'Claude isn’t connected.'}</span></div>
     <div style="margin-top:12px">${proposalsHTML()}</div></div>
   <div style="display:grid;gap:14px"><div class="panel"><h3>Accepted rules for ${mn}</h3>
-    ${st.constraints.length ? `<ul class="issues">${st.constraints.map((c, i) => `<li class="ok">${esc(describe(c))} ${isScheduler() ? `<button class="btn" data-rm="${i}" style="float:right;padding:1px 8px">Remove</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}
-    <div class="row" style="margin-top:10px"><button class="btn primary" id="applyNotes" ${canEdit() && st.constraints.length ? '' : 'disabled'}>Rebuild with these</button></div></div>
+    ${C.length ? `<ul class="issues">${C.map(c => `<li class="ok">${esc(describe(c))}${c.source === 'resident' ? ' <span class="pill">request</span>' : ''} ${isScheduler() ? `<button class="btn" data-rm="${c.id}" style="float:right;padding:1px 8px">Remove</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}
+    ${denied.length ? `<details><summary class="small">Denied (${denied.length})</summary><ul class="issues">${denied.map(r => `<li class="small">${esc(r.resident)}: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${r.reason ? ' — ' + esc(r.reason) : ''}</li>`).join('')}</ul></details>` : ''}
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="applyNotes" ${canEdit() && C.length ? '' : 'disabled'}>Rebuild with these</button></div></div>
   <div class="panel small"><h3>Add a rule by hand</h3><div class="kv">
     <label for="mType">Type</label><select id="mType" class="f"><option value="off">Day off request</option><option value="want">Wants call</option><option value="block">Unavailable (firm)</option><option value="protected">Protected event (no post-call)</option><option value="colorectal">Big colorectal day</option></select>
     <label for="mName">Resident</label><select id="mName" class="f">${roster.map(n => `<option>${n}</option>`).join('')}</select>
     <label for="mDays">${mn} days</label><input id="mDays" type="text" placeholder="e.g. 11-13 or 16"><label for="mWhy">Reason</label><input id="mWhy" type="text" placeholder="optional"></div>
     <div class="row" style="margin-top:10px"><button class="btn" id="addManual" ${isScheduler() ? '' : 'disabled'}>Add rule</button></div></div></div></div>`;
 }
+const RTYPES = [['off', 'Day off (best effort)'], ['want', 'Wants call'], ['block', 'Unavailable (firm: leave, away)'], ['protected', 'Exam or event (not post-call that day)']];
+const STATUS_PILL = { pending: '<span class="pill">pending</span>', accepted: '<span class="pill good">accepted</span>', denied: '<span class="pill crit">denied</span>' };
+function viewRequests() {
+  const myName = CTX.profile.roster_name || MY_NAME;
+  if (!myName) return `<div class="panel"><h2>Requests</h2><p>Your account isn’t linked to the roster yet. Ask a scheduler or chief to set your roster name on the People tab.</p></div>`;
+  const months = Object.keys(S.M).filter(k => S.M[k].status !== 'Published'), k = months.includes(S.month) ? S.month : months[0] || S.month;
+  const mine = S.requests.filter(r => r.source === 'resident' && r.created_by === me.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const dl = reqDeadline(k);
+  return `<div class="row"><h2>Requests</h2><span class="muted small">Only you and the schedulers/chiefs can see your requests. Due by ${dl.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} for ${monthName(k)}; later ones are marked late.</span></div>
+  <div class="grid2"><div class="panel"><h3>New request</h3><div class="kv">
+    <label for="qMonth">Month</label><select id="qMonth" class="f">${months.map(m => `<option value="${m}" ${m === k ? 'selected' : ''}>${monthName(m)}</option>`).join('')}</select>
+    <label for="qType">Type</label><select id="qType" class="f">${RTYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+    <label for="qDays">Days</label><input id="qDays" type="text" placeholder="e.g. 11-13 or 16, 20">
+    <label for="qNote">Note</label><input id="qNote" type="text" placeholder="optional, e.g. wedding"></div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="qSend">Send request</button></div>
+    ${sample ? `<hr style="margin:14px 0;border:0;border-top:1px solid var(--line)"><label for="qText" class="small muted">Or describe it and Claude fills in the form</label><textarea id="qText" rows="2" placeholder="e.g. I need the weekend of the 12th off for a wedding"></textarea><div class="row" style="margin-top:8px"><button class="btn" id="qClaude">Fill in with Claude</button></div>` : ''}</div>
+  <div class="panel"><h3>My requests</h3>${mine.length ? `<ul class="issues">${mine.map(r => `<li class="${r.status === 'denied' ? 'hard' : r.status === 'accepted' ? 'ok' : 'soft'}">${STATUS_PILL[r.status]} <b>${esc(monthName(r.month_key))}</b>: ${esc((RTYPES.find(t => t[0] === r.type) || [, r.type])[1])}, ${esc(r.days.join(', '))}${r.note ? ' · ' + esc(r.note) : ''}${isLate(r) ? ' <span class="pill warn">late</span>' : ''}${r.status === 'denied' && r.reason ? `<div class="small">Why: ${esc(r.reason)}</div>` : ''}${r.status === 'pending' ? ` <button class="btn" data-qwd="${r.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No requests yet.</p>'}</div></div>`;
+}
+
 function describe(c) { const mo = MONTHS[ym(S.month)[1] - 1]; const days = c.days.map(d => mo + ' ' + d).join(', '); const t = { off: 'off (best effort, S6)', want: 'wants call (best effort)', block: 'unavailable (firm)', protected: 'protected: not post-call (S2)', colorectal: 'big colorectal day: GS2 resident not post-call (S3)' }[c.type]; return `${c.type === 'colorectal' ? 'GS2' : c.name}: ${days} ${t}${c.reason ? ' — ' + c.reason : ''}`; }
 function proposalsHTML() { if (!S.proposals.length) return ''; return `<h3 style="margin-bottom:6px">Claude's reading</h3><ul class="issues">${S.proposals.map((c, i) => `<li class="${c.problem ? 'hard' : 'soft'}">${esc(describe(c))}${c.problem ? ` <b>— ${esc(c.problem)}</b>` : ''}<span style="float:right;display:flex;gap:6px">${c.problem || !isScheduler() ? '' : `<button class="btn" data-acc="${i}" style="padding:1px 8px">Accept</button>`}<button class="btn" data-rej="${i}" style="padding:1px 8px">Reject</button></span></li>`).join('')}</ul>`; }
 async function interpret() {
-  const st = cur(); const txt = $('#notes').value.trim(); if (!txt) return; st.notesText = txt;
+  const st = cur(); const txt = $('#notes').value.trim(); if (!txt) return; S.notes[S.month] = txt; saveNotes(S.month);
   const [y, m] = ym(S.month); const roster = Object.entries(st.inputs).map(([n, r]) => `${n} (${LEVEL(n)}, ${r.rotation})`).join('; ');
   const prompt = `You convert residency call-schedule notes into structured rules. Month: ${MONTHS_LONG[m - 1]} ${y} (day 1 is a ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][E.dow(y, m, 1)]}; ${ndays(S.month)} days). Roster: ${roster}. Nicknames: ${DATA.nicknames || 'none'}.
 Rule types: "off" = asks not to be on call those days (best effort); "want" = asks to be on call those days; "block" = firmly unavailable (leave, away, sick); "protected" = an exam or event: the person must not be post-call that day (Step 3, boards, ABSITE, ATLS); "colorectal" = big colorectal case day (name = the GS2 resident).
@@ -491,8 +531,8 @@ function viewPeople() {
   const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief (same powers as scheduler)'], ['pd', 'Program director'], ['resident', 'Resident']];
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
-  <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
-  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
+  <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Roster name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
+  ${PEOPLE.map(p => `<tr><td>${esc(p.display_name)}</td><td><select class="f" data-proster="${p.id}" aria-label="Roster name for ${esc(p.display_name)}"><option value="">—</option>${ROSTER_NAMES().map(n => `<option ${n === p.roster_name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td><td>${p.username ? esc(p.username) : '<span class="muted">not picked yet</span>'}</td><td class="small">${esc(p.email || '')}${p.confirmed ? '' : ' <span class="pill warn">no password yet</span>'}</td>
     <td><select class="f" data-prole="${p.id}" ${p.id === me.id ? 'disabled' : ''} aria-label="Role for ${esc(p.display_name)}">${ROLES.map(([v, l]) => `<option value="${v}" ${v === p.role ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><input type="checkbox" data-padmin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === me.id || p.role !== 'resident' ? 'disabled' : ''} aria-label="Admin" title="${p.role !== 'resident' ? 'Schedulers, chiefs and the PD are always admins' : ''}"></td>
     <td><input type="checkbox" data-pactive="${p.id}" ${p.active ? 'checked' : ''} ${p.id === me.id ? 'disabled' : ''} aria-label="Active"></td>
@@ -501,6 +541,7 @@ function viewPeople() {
   <div class="panel"><h3>Add a person</h3><div class="kv small">
     <label for="nName">Full name</label><input id="nName" type="text" placeholder="Jane Doe">
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="for the password link">
+    <label for="nRoster">Roster name</label><select id="nRoster" class="f"><option value="">— (PD or not on the call roster)</option>${ROSTER_NAMES().map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
     <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox"></div>
     <label class="row small" style="margin-top:8px"><input type="checkbox" id="nSend" checked> Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</label>
@@ -509,12 +550,13 @@ function viewPeople() {
 }
 async function peopleAction(body, okMsg) { const { data, error } = await sb.functions.invoke('admin-users', { body }); if (error || (data && data.error)) { toast((data && data.error) || error.message); return null; } if (okMsg) toast(okMsg); return data; }
 function wirePeople() {
+  document.querySelectorAll('[data-proster]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.proster, roster_name: el.value || null }, 'Roster name updated.'); loadPeople(); });
   document.querySelectorAll('[data-prole]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.prole, role: el.value }, 'Role updated.'); loadPeople(); });
   document.querySelectorAll('[data-padmin]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.padmin, is_admin: el.checked }, 'Admin updated.'); loadPeople(); });
   document.querySelectorAll('[data-pactive]').forEach(el => el.onchange = async () => { await peopleAction({ action: 'update', id: el.dataset.pactive, active: el.checked }, el.checked ? 'Account turned back on.' : 'Account turned off.'); loadPeople(); });
   document.querySelectorAll('[data-plink]').forEach(el => el.onclick = async () => { const d = await peopleAction({ action: 'link', id: el.dataset.plink }); if (d && d.link) showLink(d.link); });
   const add = $('#nAdd'); if (add) add.onclick = async () => {
-    const body = { action: 'create', display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
+    const body = { action: 'create', roster_name: $('#nRoster').value || null, display_name: $('#nName').value.trim(), email: $('#nEmail').value.trim(), role: $('#nRole').value, is_admin: $('#nAdmin').checked, send_email: $('#nSend').checked };
     if (!body.display_name || !body.email) return toast('Name and email are both needed.');
     const d = await peopleAction(body, body.send_email ? 'Added. They’ll get an email to pick their username and password.' : 'Added. Copy the link below and send it to them.');
     if (d) { PEOPLE = null; render(); if (d.link) setTimeout(() => showLink(d.link), 400); }
@@ -526,7 +568,7 @@ function showLink(link) { const o = $('#linkOut'); if (!o) return toast('Link re
 const VIEWS = { people: viewPeople, schedule: viewSchedule, inputs: viewInputs, dashboard: viewDashboard, history: viewHistory, notes: viewNotes, rules: viewRules, approval: viewApproval };
 function route() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'schedule'; }
 // Make the signed-in person's own name stand out everywhere it appears (calendar, rounding, tables, dashboard).
-const MY_NAME = (() => { const dn = String(CTX.profile.display_name || '').trim().toLowerCase(), first = dn.split(/\s+/)[0];
+const MY_NAME = (() => { if (CTX.profile.roster_name) return CTX.profile.roster_name; const dn = String(CTX.profile.display_name || '').trim().toLowerCase(), first = dn.split(/\s+/)[0];
   const names = Object.keys(DATA.pgy || {}); const nick = DATA.nicknameOf || {}; return names.find(n => n.toLowerCase() === dn) || names.find(n => n.toLowerCase() === first) || names.find(n => (nick[n] || '').toLowerCase() === first) || null; })();
 function highlightMe(root) {
   if (!MY_NAME || !root) return;
@@ -543,7 +585,7 @@ const ADMIN_TABS = ['inputs', 'dashboard', 'rules', 'people'];
 function render() {
   let r = route();
   if (ADMIN_TABS.includes(r) && !adminView()) { r = 'schedule'; history.replaceState(null, '', '#schedule'); }
-  document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); });
+  document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); if (t === 'notes') a.textContent = adminView() ? 'Notes for Claude' : 'Requests'; });
   const pv = $('#previewNote'); if (pv) pv.hidden = !(S.isAdmin && roleKey(S.role) !== S.realRole);
   document.querySelectorAll('nav.tabs a').forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + r ? 'page' : 'false'));
   if (cur().A && !['schedule', 'dashboard'].includes(r)) evaluateNow();
@@ -565,12 +607,24 @@ function wire() {
   document.querySelectorAll('[data-lv]').forEach(i => i.onchange = () => { const n = i.dataset.n, f = i.dataset.lv; S.people[n] = S.people[n] || {}; S.people[n][f] = i.type === 'checkbox' ? i.checked : i.value; if (f !== 'leaveConfirmed') S.people[n].leaveConfirmed = false; logEvent(k, `Leave: ${n} ${f} = ${i.type === 'checkbox' ? i.checked : i.value}`); save(); render(); });
   on('#inputsApply', () => { location.hash = 'schedule'; generate(true); });
   on('#interpret', interpret);
-  const notes = $('#notes'); if (notes) notes.oninput = () => { st.notesText = notes.value; };
-  document.querySelectorAll('[data-acc]').forEach(b => b.onclick = () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; st.constraints.push(c); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
+  const notes = $('#notes'); if (notes) notes.oninput = () => { S.notes[k] = notes.value; saveNotes(k); };
+  document.querySelectorAll('[data-qacc]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qacc); await setRequest(r.id, { status: 'accepted', decided_by: me.id, decided_at: new Date().toISOString(), reason: '' }); logEvent(k, `Accepted ${r.resident}'s request`); render(); });
+  document.querySelectorAll('[data-qden]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qden); const why = (document.querySelector(`[data-qwhy="${r.id}"]`) || {}).value || ''; await setRequest(r.id, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), reason: why.trim() }); logEvent(k, `Denied ${r.resident}'s request`); render(); });
+  document.querySelectorAll('[data-qwd]').forEach(b => b.onclick = async () => { await dropRequest(+b.dataset.qwd); render(); });
+  on('#qSend', async () => { const mk = $('#qMonth').value, days = parseDays($('#qDays').value, ndays(mk)); if (!days.length) return toast('Add the day numbers, e.g. 11-13.');
+    const r = await addRequest({ month_key: mk, resident: CTX.profile.roster_name || MY_NAME, type: $('#qType').value, days, note: $('#qNote').value.trim(), status: 'pending', source: 'resident', created_by: me.id });
+    if (r) { logEvent(mk, `Request sent (${r.type}, ${days.join(', ')})`); toast('Request sent. You’ll see the decision here.'); render(); } });
+  on('#qClaude', async () => { const txt = ($('#qText').value || '').trim(); if (!txt) return; const mk = $('#qMonth').value, [y, m] = ym(mk), who = CTX.profile.roster_name || MY_NAME; const btn = $('#qClaude'); btn.disabled = true; btn.textContent = 'Reading…';
+    const prompt = `Turn one resident's call-schedule request into JSON. Month: ${MONTHS_LONG[m - 1]} ${y} (day 1 is a ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][E.dow(y, m, 1)]}; ${ndays(mk)} days). Types: "off" = would like not to be on call (best effort), "want" = wants call, "block" = firmly unavailable (leave, away), "protected" = exam or event, must not be post-call. A weekend off means Fri, Sat and Sun. Return JSON only: {"type":"off|want|block|protected","days":[<ints>],"note":"<short>"}.\nRequest: ${txt}`;
+    try { const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } }); if (error) throw error; const r = (v && v.rules && v.rules[0]) || v || {};
+      if (r.type) $('#qType').value = r.type; if (Array.isArray(r.days)) $('#qDays').value = r.days.filter(d => d >= 1 && d <= ndays(mk)).join(', '); if (r.note || r.reason) $('#qNote').value = r.note || r.reason; toast(`Filled in for ${who}. Check it, then send.`); }
+    catch (e) { toast('Claude couldn’t read that: ' + ((e && e.message) || 'error')); }
+    btn.disabled = false; btn.textContent = 'Fill in with Claude'; });
+  document.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason || '', status: 'accepted', source: 'claude', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
   document.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => { S.proposals.splice(+b.dataset.rej, 1); render(); });
-  document.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { const c = st.constraints.splice(+b.dataset.rm, 1)[0]; logEvent(k, 'Removed rule: ' + describe(c)); save(); render(); });
+  document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { const c = cons(k).find(x => x.id === +b.dataset.rm); if (!c) return; if (c.source === 'resident') await setRequest(c.id, { status: 'denied', reason: 'Removed by a scheduler', decided_by: me.id, decided_at: new Date().toISOString() }); else await dropRequest(c.id); logEvent(k, 'Removed rule: ' + describe(c)); save(); render(); });
   on('#applyNotes', () => { location.hash = 'schedule'; generate(true); });
-  on('#addManual', () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); st.constraints.push(c); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); });
+  on('#addManual', async () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason, status: 'accepted', source: 'admin', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); });
   document.querySelectorAll('[data-t]').forEach(i => i.onchange = () => { S.rules.targets[i.dataset.t][+i.dataset.i] = Math.max(0, +i.value || 0); save(); });
   const num = (id, kk) => { const el = $(id); if (el) el.onchange = () => { S.rules[kk] = +el.value; save(); }; };
   num('#rCap', 'fellowCap'); num('#rQ2', 'maxQ2Run'); num('#rHrs', 'callHours');
@@ -592,6 +646,7 @@ $('#monthSel').innerHTML = KEYS.map(k => `<option value="${k}">${monthName(k)}</
 $('#monthSel').onchange = e => { S.month = e.target.value; S.proposals = []; render(); };
 window.addEventListener('hashchange', () => { $('#drawer').classList.remove('open'); render(); });
 render();
+Promise.all([loadRequests(), loadNotes()]).then(render);
 connect();
 window.__schedRender = render;
 };

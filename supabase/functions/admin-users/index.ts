@@ -40,15 +40,16 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.auth.admin.generateLink({ type: 'invite', email: body.email, options: { redirectTo: site } });
         if (error) return json({ error: error.message }, 400); userId = data.user.id; link = data.properties.action_link;
       }
-      const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin });
+      const { error: pe } = await admin.from('profiles').insert({ id: userId, username, display_name: String(body.display_name).trim(), role: body.role, is_admin: !!body.is_admin, roster_name: body.roster_name ? String(body.roster_name).trim() : null });
       if (pe) return json({ error: pe.message }, 400);
       await log(`added ${username || String(body.display_name).trim()} as ${body.role}${body.is_admin ? ' (admin)' : ''}`);
       return json({ ok: true, link });
     }
 
     if (body.action === 'update') {
-      if (body.id === me.id) return json({ error: 'You can’t change your own role, admin or active status.' }, 400);
+      if (body.id === me.id && (body.role !== undefined || body.is_admin !== undefined || body.active !== undefined)) return json({ error: 'You can’t change your own role, admin or active status.' }, 400);
       const patch: Record<string, unknown> = {};
+      if (body.roster_name !== undefined) patch.roster_name = body.roster_name ? String(body.roster_name).trim() : null;
       if (body.role !== undefined) { if (!ROLES.includes(body.role)) return json({ error: 'Bad role.' }, 400); patch.role = body.role; }
       if (body.is_admin !== undefined) patch.is_admin = !!body.is_admin;
       if (body.active !== undefined) patch.active = !!body.active;
