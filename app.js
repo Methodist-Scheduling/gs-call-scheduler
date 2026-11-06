@@ -186,6 +186,16 @@ const isLate = r => new Date(r.created_at) > reqDeadline(r.month_key);
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Instant tooltips for anything with title/data-tip (native titles are slow or never show in some browsers)
+(() => { const box = () => { let t = $('#tipbox'); if (!t) { t = document.createElement('div'); t.id = 'tipbox'; document.body.appendChild(t); } return t; };
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[title],[data-tip]'); const t = box(); if (!el) { t.style.display = 'none'; return; }
+    if (el.hasAttribute('title')) { if (el.title) el.dataset.tip = el.title; el.removeAttribute('title'); } if (!el.dataset.tip) { t.style.display = 'none'; return; }
+    t.textContent = el.dataset.tip; t.style.display = 'block'; const r = el.getBoundingClientRect();
+    t.style.left = Math.max(8, Math.min(r.left, innerWidth - t.offsetWidth - 8)) + 'px'; t.style.top = (r.bottom + 6 + t.offsetHeight > innerHeight ? r.top - t.offsetHeight - 6 : r.bottom + 6) + 'px'; });
+  document.addEventListener('scroll', () => { const t = $('#tipbox'); if (t) t.style.display = 'none'; }, true);
+  // click outside the side drawer closes it (modals already close on an outside click)
+  document.addEventListener('mousedown', e => { const d = $('#drawer'); if (!d || !d.classList.contains('open') || d.contains(e.target) || e.target.closest('.modal-ov,#tipbox,#toast')) return; d.classList.remove('open'); });
+})();
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); el.onclick = () => el.classList.remove('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), Math.min(15000, 6000 + String(t).length * 60)); }
 const adminView = () => S.isAdmin && S.role !== 'Resident'; // schedulers, chiefs and the PD are admins; 'Preview as Resident' hides admin screens
 const isScheduler = () => S.role === 'Scheduler' || S.role === 'Chief'; // chiefs can do everything the PGY-4 schedulers do
@@ -893,9 +903,6 @@ function wire() {
   const mt = $('#mineT'); if (mt) mt.onchange = () => { MINE = mt.checked; try { localStorage.setItem('gs-mine', MINE ? '1' : '0'); } catch (e) {} render(); };
   document.querySelectorAll('[data-jump]').forEach(el => el.onclick = e => { e.preventDefault(); const t = document.getElementById(el.dataset.jump); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   document.querySelectorAll('[data-rc]').forEach(el => el.onclick = () => showRuleCheck(el.dataset.rc));
-  document.querySelectorAll('[data-tip]').forEach(el => { el.onmouseenter = () => { let t = $('#tipbox'); if (!t) { t = document.createElement('div'); t.id = 'tipbox'; document.body.appendChild(t); }
-    t.textContent = el.dataset.tip; t.style.display = 'block'; const r = el.getBoundingClientRect(); t.style.left = Math.max(8, Math.min(r.left, innerWidth - t.offsetWidth - 8)) + 'px'; t.style.top = (r.bottom + 6 + t.offsetHeight > innerHeight ? r.top - t.offsetHeight - 6 : r.bottom + 6) + 'px'; };
-    el.onmouseleave = () => { const t = $('#tipbox'); if (t) t.style.display = 'none'; }; });
   document.querySelectorAll('[data-why]').forEach(el => el.onclick = e => { e.stopPropagation(); toast('⛔ ' + el.dataset.why); });
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
