@@ -4,7 +4,7 @@
   const params = new URLSearchParams(location.hash.slice(1));
   const flow = params.get('type');                    // 'invite' or 'recovery' when arriving from a link
   const linkError = params.get('error_description');
-  const sb = supabase.createClient(cfg.url, cfg.key, { auth: { persistSession: true, detectSessionInUrl: true } });
+  const sb = supabase.createClient(cfg.url, cfg.key, { auth: { persistSession: true, detectSessionInUrl: false } }); // we read setup links ourselves so they can't silently replace whoever is signed in
   const auth = document.getElementById('auth');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const card = html => { auth.hidden = false; document.getElementById('shell').hidden = true; auth.innerHTML = `<div class="authcard"><h1>GS Call Scheduler</h1>${html}</div>`; };
@@ -109,10 +109,33 @@
     document.getElementById('peopleTab').hidden = !profile.is_admin;
     document.getElementById('signOut').onclick = () => sb.auth.signOut().then(() => { location.hash = ''; location.reload(); });
     if (!location.hash || location.hash.includes('access_token')) history.replaceState(null, '', location.pathname + '#schedule');
+    // if another tab signs out or switches accounts, don't keep showing this account's screens on a dead session
+    sb.auth.onAuthStateChange((evt, sess) => { if (evt === 'INITIAL_SESSION' || evt === 'TOKEN_REFRESHED') return; if (!sess || sess.user.id !== user.id) {
+      const b = document.createElement('div'); b.className = 'modal-ov'; b.innerHTML = '<div class="modal"><h3 style="margin-top:0">You were signed out</h3><p class="small">This browser signed out or switched to another account in a different tab. Reload to continue.</p><button class="btn primary" id="rl">Reload</button></div>';
+      document.body.appendChild(b); b.querySelector('#rl').onclick = () => { location.hash = '#schedule'; location.reload(); }; } });
     window.startScheduler({ sb, user, profile, ref, settings: setQ.data, months: monQ.data || [], versions: verQ.data || [], logs: logQ.data || [] });
   }
 
   if (linkError) return showLogin('That link didn’t work (' + linkError.replace(/\+/g, ' ') + '). Ask an admin for a new one.');
+  // A setup/reset link carries a sign-in for its account. If someone else is already signed in in this browser,
+  // opening it would sign them out in every tab (that's what broke the admin session during testing), so ask first.
+  const linkTok = params.get('access_token'), linkRef = params.get('refresh_token');
+  if (linkTok && linkRef) {
+    const { data: { session: here } } = await sb.auth.getSession();
+    let linkUser = null; try { linkUser = JSON.parse(atob(linkTok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub; } catch (e) {}
+    const take = async () => { const { error } = await sb.auth.setSession({ access_token: linkTok, refresh_token: linkRef }); if (error) return showLogin('That link didn’t work (' + error.message + '). Ask an admin for a new one.'); return showSetPassword(flow === 'invite'); };
+    if (here && linkUser && here.user.id !== linkUser) {
+      const keepHash = location.hash; history.replaceState(null, '', location.pathname);
+      card(`<p><b>This link is for a different account.</b></p><p class="small">You’re signed in here as <b>${esc(here.user.email || 'someone else')}</b>. Opening the link in this browser signs that account out in every tab.</p>
+        <p class="small">Best: copy the link into a <b>private window</b> (Safari: File → New Private Window; Chrome: New Incognito Window).</p>
+        <div class="row" style="gap:8px;margin-top:10px"><button class="btn primary" id="stay">Stay signed in as me</button><button class="btn" id="swap">Use the link here anyway</button></div>`);
+      document.getElementById('stay').onclick = () => { location.hash = '#schedule'; location.reload(); };
+      document.getElementById('swap').onclick = () => { history.replaceState(null, '', location.pathname + keepHash); take(); };
+      return;
+    }
+    history.replaceState(null, '', location.pathname);
+    return take();
+  }
   const { data: { session } } = await sb.auth.getSession();
   if (session && (flow === 'invite' || flow === 'recovery')) return showSetPassword(flow === 'invite');
   if (!session) return showLogin();

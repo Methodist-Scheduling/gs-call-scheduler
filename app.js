@@ -419,7 +419,7 @@ Return JSON only: {"rules":[{"type":"off|want|block|protected|colorectal","name"
 Notes:
 ${txt}`;
   const btn = $('#interpret'); btn.disabled = true; btn.textContent = 'Reading notes…';
-  try { const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } }); if (error) throw error; if (v && v.error) throw new Error(v.error); S.proposals = ((v && v.rules) || []).map(r => { const c = { type: r.type, name: r.name, days: (r.days || []).filter(d => d >= 1 && d <= ndays(S.month)), reason: r.reason || '' }; if (!['off', 'want', 'block', 'protected', 'colorectal'].includes(c.type)) c.problem = 'unknown rule type'; else if (c.type !== 'colorectal' && !st.inputs[c.name]) c.problem = 'name not on this month’s roster'; else if (!c.days.length) c.problem = 'no dates in this month'; return c; }); if (!S.proposals.length) toast('Claude found no rules in those notes.'); }
+  try { const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } }); if (error || (v && v.error)) throw new Error(await fnError(error, v)); S.proposals = ((v && v.rules) || []).map(r => { const c = { type: r.type, name: r.name, days: (r.days || []).filter(d => d >= 1 && d <= ndays(S.month)), reason: r.reason || '' }; if (!['off', 'want', 'block', 'protected', 'colorectal'].includes(c.type)) c.problem = 'unknown rule type'; else if (c.type !== 'colorectal' && !st.inputs[c.name]) c.problem = 'name not on this month’s roster'; else if (!c.days.length) c.problem = 'no dates in this month'; return c; }); if (!S.proposals.length) toast('Claude found no rules in those notes.'); }
   catch (e) { toast('Claude couldn’t read the notes: ' + ((e && e.message) || 'error')); }
   btn.disabled = false; btn.textContent = 'Interpret with Claude'; render();
 }
@@ -571,7 +571,9 @@ function rosterPanel() {
       <div class="row" style="margin-top:8px"><button class="btn primary" id="rnAdd">Add to roster</button></div>` : ''}</div>`;
 }
 async function saveRoster(msg) { const { error } = await sb.from('reference').update({ value: DATA }).eq('key', 'data'); if (error) return toast('Roster not saved: ' + error.message); toast(msg); }
-async function peopleAction(body, okMsg) { const { data, error } = await sb.functions.invoke('admin-users', { body }); if (error || (data && data.error)) { toast((data && data.error) || error.message); return null; } if (okMsg) toast(okMsg); return data; }
+// readable errors from the server functions instead of "non-2xx status code"
+async function fnError(error, data) { if (data && data.error) return data.error; let msg = error && error.message; try { const r = error && error.context; if (r && r.status === 401) return 'Your sign-in ended (maybe another tab signed out or switched accounts). Reload and sign in again.'; const j = r && await r.json(); if (j && j.error) msg = j.error; } catch (e) {} return msg || 'Something went wrong.'; }
+async function peopleAction(body, okMsg) { const { data, error } = await sb.functions.invoke('admin-users', { body }); if (error || (data && data.error)) { toast(await fnError(error, data)); return null; } if (okMsg) toast(okMsg); return data; }
 function wirePeople() {
   document.querySelectorAll('[data-pdel]').forEach(el => el.onclick = async () => {
     if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Delete forever?'; el.style.fontWeight = '700'; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ''; el.textContent = 'Delete'; el.style.fontWeight = ''; } }, 5000); return; }
@@ -666,7 +668,7 @@ function wire() {
     if (r) { logEvent(mk, `Request sent (${r.type}, ${days.join(', ')})`); toast('Request sent. You’ll see the decision here.'); render(); } });
   on('#qClaude', async () => { const txt = ($('#qText').value || '').trim(); if (!txt) return; const mk = $('#qMonth').value, [y, m] = ym(mk), who = CTX.profile.roster_name || MY_NAME; const btn = $('#qClaude'); btn.disabled = true; btn.textContent = 'Reading…';
     const prompt = `Turn one resident's call-schedule request into JSON. Month: ${MONTHS_LONG[m - 1]} ${y} (day 1 is a ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][E.dow(y, m, 1)]}; ${ndays(mk)} days). Types: "off" = would like not to be on call (best effort), "want" = wants call, "block" = firmly unavailable (leave, away), "protected" = exam or event, must not be post-call. A weekend off means Fri, Sat and Sun. Return JSON only: {"type":"off|want|block|protected","days":[<ints>],"note":"<short>"}.\nRequest: ${txt}`;
-    try { const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } }); if (error) throw error; const r = (v && v.rules && v.rules[0]) || v || {};
+    try { const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } }); if (error || (v && v.error)) throw new Error(await fnError(error, v)); const r = (v && v.rules && v.rules[0]) || v || {};
       if (r.type) $('#qType').value = r.type; if (Array.isArray(r.days)) $('#qDays').value = r.days.filter(d => d >= 1 && d <= ndays(mk)).join(', '); if (r.note || r.reason) $('#qNote').value = r.note || r.reason; toast(`Filled in for ${who}. Check it, then send.`); }
     catch (e) { toast('Claude couldn’t read that: ' + ((e && e.message) || 'error')); }
     btn.disabled = false; btn.textContent = 'Fill in with Claude'; });
