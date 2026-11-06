@@ -874,7 +874,7 @@ async function loadPeople() { const { data, error } = await sb.functions.invoke(
 function viewPeople() {
   if (!adminView()) return '<div class="panel">Only admins manage accounts.</div>';
   if (PEOPLE === null) { loadPeople(); return '<div class="panel">Loading accounts…</div>'; }
-  const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief (same powers as scheduler)'], ['pd', 'Program director'], ['resident', 'Resident']];
+  const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief'], ['pd', 'Program director'], ['resident', 'Resident']];
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
   <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Roster name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
