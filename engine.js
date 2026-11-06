@@ -259,25 +259,38 @@
       // the SICU fellow never cross-covers; she rounds only ICU, only on her weekends
       const all = [...new Set(callDays.map(d => A[d - 1]).filter(Boolean).flatMap(a => [a.I, a.M, a.U]).filter(Boolean))];
       const callers = all.filter(n => !P.byName[n] || P.byName[n].lvl !== 'F');
-      // Holidays (and holiday weekends) work like a weekend with a fixed pool: everyone working the holiday
-      // (on call that day or post-call from the night before) rounds, own service first, the rest spread across
-      // the empty services. Everyone else is off: no fill-ins, no alternation.
-      // T/EGS weekend rounding always has two people (the same pair rounds Sat and Sun). Move someone from a team that
-      // has two (lowest PGY first, never the fellow); otherwise, on a normal weekend, pull in a T/EGS resident.
+      const base = n => n.replace(' (cross-cover)', '');
+      const label = (k, n) => BLOCK[k].includes(P.byName[n].rotation) || (k === 'ICU' && P.byName[n].lvl === 'F') ? n : n + ' (cross-cover)';
+      // W7: one resident can round GS1 and GS2 together. Returns the person freed up (lower PGY of the two), or null.
+      const combineGS = () => { if (b.GS1.length !== 1 || b.GS2.length !== 1) return null; const a = base(b.GS1[0]), c = base(b.GS2[0]); if (a === c || !P.byName[a] || !P.byName[c]) return null;
+        const free = P.byName[a].pgy <= P.byName[c].pgy ? a : c, keep = free === a ? c : a; b.GS1 = [label('GS1', keep)]; b.GS2 = [label('GS2', keep)]; return free; };
+      const shareGS = () => { if (!b.GS1.length && b.GS2.length === 1) b.GS1 = [label('GS1', base(b.GS2[0]))]; if (!b.GS2.length && b.GS1.length === 1) b.GS2 = [label('GS2', base(b.GS1[0]))]; };
+      // T/EGS weekend rounding always has two people (the same pair rounds every day). Move someone from a team that
+      // has two (lowest PGY first, never the fellow); else free someone by combining GS1 + GS2 (W7); else pull in a T/EGS resident.
       const twoT = (pull) => { const T = 'Trauma/EGS'; if (!wk || b[T].length >= 2) return;
-        const base = n => n.replace(' (cross-cover)', ''), offT = tUp ? tUppers.filter(u => u !== tUp).map(u => u.name) : [];
+        const offT = tUp ? tUppers.filter(u => u !== tUp).map(u => u.name) : [];
         const donors = Object.keys(b).filter(k => k !== T && b[k].length >= 2).flatMap(k => b[k].map(n => ({ k, n }))).filter(x => { const p = P.byName[base(x.n)]; return p && p.lvl !== 'F' && !(tUp && base(x.n) === tUp.name); })
           .sort((x, y) => P.byName[base(x.n)].pgy - P.byName[base(y.n)].pgy);
-        if (donors.length) { const x = donors[0]; b[x.k].splice(b[x.k].indexOf(x.n), 1); b[T].push(BLOCK[T].includes(P.byName[base(x.n)].rotation) ? base(x.n) : base(x.n) + ' (cross-cover)'); return; }
+        if (donors.length) { const x = donors[0]; b[x.k].splice(b[x.k].indexOf(x.n), 1); b[T].push(label(T, base(x.n))); return; }
+        const freed = combineGS(); if (freed) { b[T].push(label(T, freed)); return; }
         if (!pull) return;
         const f = P.people.filter(p => BLOCK[T].includes(p.rotation) && avail(p) && p.lvl !== 'F' && !callers.includes(p.name) && !placed(p.name) && !offT.includes(p.name))
           .sort((x, y) => (prev.has(x.name) - prev.has(y.name)) || x.pgy - y.pgy || ((fills[x.name] || 0) - (fills[y.name] || 0)))[0];
         if (f) { b[T].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } };
+      // HD5: a holiday is rounded by one team for the whole holiday, made only of the people on call during it
+      // (the holiday Working list, plus the fellow if she's on call). Own service first; T/EGS gets two; GS1 + GS2 are
+      // combined when that's what it takes (W7). Nobody outside the holiday's call pool rounds.
       if (refHoliday) {
-        all.forEach(n => { const p = P.byName[n]; if (!p) return; const k = p.lvl === 'F' ? 'ICU' : blockOf(p); if (k && !b[k].length) b[k].push(n); });
-        all.forEach(n => { if (placed(n) || !P.byName[n]) return; const k = Object.keys(b).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
-        twoT(true);
-        return { blocks: b, callers: all, workers: new Set(all) };
+        const pool = all.filter(n => P.byName[n]), extras = [];
+        pool.forEach(n => { const p = P.byName[n], k = p.lvl === 'F' ? 'ICU' : blockOf(p); if (k && !b[k].length) b[k].push(n); else extras.push(n); });
+        const ex = extras.filter(n => P.byName[n].lvl !== 'F').sort((x, y) => P.byName[x].pgy - P.byName[y].pgy), T = 'Trauma/EGS';
+        while (b[T].length < 2 && ex.length) b[T].push(label(T, ex.shift()));
+        Object.keys(b).forEach(k => { if (!b[k].length && ex.length) b[k].push(label(k, ex.shift())); });
+        shareGS();
+        if (b[T].length < 2) { const f = combineGS(); if (f) b[T].push(label(T, f)); }
+        Object.keys(b).forEach(k => { if (!b[k].length) { const f = combineGS(); if (f) b[k].push(label(k, f)); } });
+        ex.forEach(n => { const k = Object.keys(b).filter(x => x !== 'ICU').sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(label(k, n)); });
+        return { blocks: b, callers: all, workers: new Set(pool) };
       }
       callers.forEach(n => { const p = P.byName[n]; if (!p) return; const k = blockOf(p); if (k && !(k === 'ICU' && fellowWeek)) b[k].push(n); });
       // W3: fellow and ICU resident alternate weekends. Fellow weekend: fellow alone on ICU (an ICU resident on call cross-covers elsewhere).
@@ -301,7 +314,7 @@
       }
       Object.keys(BLOCK).forEach(k => {
         // pull someone in only if they had last weekend off; otherwise leave the gap for a cross-covering caller (W1)
-        if (!b[k].length) { const f = pick(BLOCK[k]); if (f && !prev.has(f.name)) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } }
+        if (!b[k].length && !((k === 'GS1' && b.GS2.length === 1) || (k === 'GS2' && b.GS1.length === 1))) { const f = pick(BLOCK[k]); if (f && !prev.has(f.name)) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } } // W7: GS1/GS2 can share one rounder instead of pulling someone in
         // W2: one resident covers HPB and Transplant; split into two when feasible (4+ people on the two services, second person didn't work last weekend)
         if (k === 'HPB/Transplant' && b[k].length === 1) {
           const one = P.byName[b[k][0]], other = one && one.rotation === 'HPB' ? 'Transplant' : 'HPB';
@@ -310,6 +323,7 @@
         }
       });
       callers.forEach(n => { if (placed(n)) return; const k = Object.keys(b).filter(x => !(fellowWeek && x === 'ICU')).sort((p, q) => b[p].length - b[q].length)[0]; b[k].push(n + ' (cross-cover)'); });
+      shareGS(); // W7
       // still empty and no caller to cross-cover: pull someone in even if they worked last weekend
       Object.keys(BLOCK).forEach(k => { if (!b[k].length) { const f = pick(BLOCK[k]); if (f) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } } });
       twoT(true);
@@ -333,20 +347,24 @@
     const tOn = (i, off) => { for (let j = 0; j < tUppers.length; j++) { const p = tUppers[(i + off + j) % tUppers.length]; if (okOn(p, WK[i].ref)) return p; } return null; };
     const tConf = off => WK.reduce((n, w, i) => { const on = tOn(i, off); return n + tUppers.filter(u => u !== on && lockedOn(u.name, w)).length; }, 0);
     const tOff = tUppers.length >= 2 ? [...Array(tUppers.length).keys()].sort((a, c) => (tConf(a) - tConf(c)) || ((a !== tStart) - (c !== tStart)))[0] : 0;
+    // HD5 holiday blocks: each run of holiday days, joined with any weekend it touches (a long weekend is one holiday),
+    // gets one rounding team for every day of it
+    const HS = new Set((holidays || []).filter(d => d >= 1 && d <= P.nd));
+    WK.forEach(w => { const first = w.days[0], last = w.days.at(-1); if (w.days.some(d => HS.has(d)) || HS.has(last + 1) || HS.has(first - 1)) w.days.forEach(d => HS.add(d)); });
+    const holBlocks = []; [...HS].sort((a, c) => a - c).forEach(d => { const bl = holBlocks.at(-1); if (bl && bl.at(-1) === d - 1) bl.push(d); else holBlocks.push([d]); });
+    const holRec = {}; holBlocks.forEach(bl => { const rec = applyOvr(build(bl, bl[0], new Set(), false, true, null, true), bl[0]); rec.holiday = true;
+      rec.weekend = bl.some(d => [0, 5, 6].includes(P.days[d - 1].w)); rec.holidayDays = bl.slice(); bl.forEach(d => { holRec[d] = rec; }); });
     WK.forEach((w, i) => {
       const days = w.days;
-      const holWk = (holidays || []).some(d => days.includes(d));   // e.g. the Christmas/New Year's weekend: holiday rules
-      const fw = !holWk && FW.has(i);
-      const tUp = !holWk && tUppers.length >= 2 ? tOn(i, tOff) : null;
-      // holiday weekend: whoever is post-call on the holiday Friday (Thursday's callers) rounds too
-      const cDays = holWk && days[0] > 1 && (holidays || []).includes(days[0]) ? [days[0] - 1, ...days] : days;
-      const rec = applyOvr(build(cDays, w.ref, prevWorkers, fw, holWk, tUp, true), w.ref); if (holWk) rec.holiday = true;
+      if (days.every(d => holRec[d])) { days.forEach(d => out[d] = holRec[d]); prevWorkers = holRec[days[0]].workers; wkIdx++; return; } // part of a holiday: its team covers it
+      const fw = FW.has(i);
+      const tUp = tUppers.length >= 2 ? tOn(i, tOff) : null;
+      const rec = applyOvr(build(days, w.ref, prevWorkers, fw, false, tUp, true), w.ref);
       rec.weekend = true; rec.fellowWeek = fw; rec.tegsUpper = tUp ? tUp.name : null; rec.tegsOff = tUp ? tUppers.filter(p => p !== tUp).map(p => p.name) : []; prevWorkers = rec.workers;
       days.forEach(d => out[d] = rec); wkIdx++;
     });
     void fellowRounds;
-    // weekday holidays: that day's callers + whoever is post-call from the night before
-    (holidays || []).forEach(d => { if (out[d] || d < 1 || d > P.nd) return; const rec = applyOvr(build(d > 1 ? [d - 1, d] : [d], d, new Set(), false, true), d); rec.holiday = true; out[d] = rec; });
+    Object.entries(holRec).forEach(([d, rec]) => { if (!out[d]) out[d] = rec; }); // weekday holidays
     return out;
   }
 

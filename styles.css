@@ -278,3 +278,6 @@ html.practice header.top { border-top: 4px solid #6b2fd6; }
 nav.tabs a.coach-next { outline: 2px solid #6b2fd6; outline-offset: -2px; border-radius: 6px; animation: coachPulse 1.6s ease-in-out infinite; }
 @keyframes coachPulse { 50% { background: rgba(107,47,214,.15); } }
 @media (max-width: 720px) { .coach { left: 8px; right: 8px; width: auto; bottom: 8px; max-height: 45vh; } }
+
+.addform .checkcell { display: flex; align-items: flex-start; gap: 8px; margin: 0; white-space: normal !important; line-height: 1.4; }
+.addform .checkcell input { flex: none; width: auto; margin: 3px 0 0; }

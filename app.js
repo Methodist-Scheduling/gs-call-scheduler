@@ -182,7 +182,7 @@ const ATT_COLS = [['tam', 'Trauma AM'], ['tpm', 'Trauma PM'], ['sicu', 'SICU'], 
 const canAtt = () => isScheduler() || S.role === 'Program Director';
 async function loadAtt() { const { data, error } = await sb.from('attendings').select('month_key,data'); if (!error) { S.att = {}; (data || []).forEach(r => S.att[r.month_key] = r.data || {}); Object.entries(attDirty || {}).forEach(([k, dd]) => Object.entries(dd).forEach(([dc, v]) => { const [d, c] = dc.split('|'); setAtt(k, +d, c, v, true); })); } }
 // Save only the cells this person changed, merged into the latest copy, so two people editing (or a stale screen) never wipe each other's entries
-function saveAtt(k) { clearTimeout(attTimers[k]); attTimers[k] = setTimeout(async () => { attPending++;
+function saveAtt(k, immediate) { clearTimeout(attTimers[k]); const st_ = $('#attStatus'); if (st_) st_.textContent = 'Saving…'; attTimers[k] = setTimeout(async () => { attPending++;
   const dirty = attDirty[k] || {}; attDirty[k] = {};
   const { data: row } = await sb.from('attendings').select('data').eq('month_key', k).maybeSingle();
   const merged = JSON.parse(JSON.stringify((row && row.data) || {}));
@@ -191,7 +191,8 @@ function saveAtt(k) { clearTimeout(attTimers[k]); attTimers[k] = setTimeout(asyn
   setTimeout(() => attPending--, 1500);
   if (error) { toast('Attendings not saved: ' + error.message); attDirty[k] = Object.assign(dirty, attDirty[k]); return; }
   S.att[k] = Object.assign(merged, {}); Object.entries(attDirty[k]).forEach(([dc, v]) => { const [d, c] = dc.split('|'); setAtt(k, +d, c, v, true); }); // keep anything typed while saving
-}, 500); }
+  const el = $('#attStatus'); if (el) el.textContent = '✓ Saved ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}, immediate ? 0 : 500); }
 function setAtt(k, d, col, v, noDirty) { const m = S.att[k] = S.att[k] || {}; const day = m[d] = Object.assign({}, m[d]); v = String(v || '').trim(); if (v) day[col] = v; else delete day[col]; if (!Object.keys(day).length) delete m[d];
   if (!noDirty) { attDirty[k] = attDirty[k] || {}; attDirty[k][d + '|' + col] = v; }
   if (v) { const dl = document.getElementById('attNames'); if (dl && ![...dl.options].some(o => o.value === v)) { const o = document.createElement('option'); o.value = v; dl.appendChild(o); } } } // new names show up in suggestions right away
@@ -203,7 +204,7 @@ function attendingsPanel(k) {
   const names = [...new Set(Object.values(S.att).flatMap(mm => Object.values(mm).flatMap(x => Object.values(x))))].sort();
   const rows = Array.from({ length: nd }, (_, i) => i + 1).map(d => { const w = E.dow(y, m, d), wk = w === 0 || w === 6;
     return `<tr class="${wk ? 'wkrow' : ''}"><td class="small" style="white-space:nowrap">${DOW[w]} ${d}</td>${ATT_COLS.map(([c, l]) => `<td><input type="text" class="att-in" list="attNames" data-att="${d}|${c}" value="${esc((A[d] || {})[c] || '')}" ${ed ? '' : 'disabled'} aria-label="${l} attending, ${monthName(k)} ${d}"></td>`).join('')}</tr>`; }).join('');
-  return `<div class="panel" style="margin-top:14px" id="attPanel"><h3>Attendings · ${monthName(k)}</h3>
+  return `<div class="panel" style="margin-top:14px" id="attPanel"><div class="row" style="gap:10px;align-items:center"><h3 style="margin:0">Attendings · ${monthName(k)}</h3><span class="spacer"></span>${ed ? `<span class="small muted" id="attStatus">Saves as you type</span><button class="btn primary" id="attSave">Save</button>` : ''}</div>
     <p class="small muted">Shown to everyone on the calendar and the PDF. ${ed ? 'Type a name per day, or fill a stretch of days at once below. Pasting a list (one name per line) fills down from that day.' : 'Schedulers, chiefs and the PD edit these.'}</p>
     ${ed ? `<div class="row small" style="gap:8px;flex-wrap:wrap;margin-bottom:10px"><b>Fill</b><select id="afCol" class="f">${ATT_COLS.map(([c, l]) => `<option value="${c}">${l}</option>`).join('')}<option value="tr">Trauma AM + PM</option></select>
       <input id="afName" type="text" list="attNames" placeholder="Attending" style="width:150px"> from <select id="afFrom" class="f">${Array.from({ length: nd }, (_, i) => `<option>${i + 1}</option>`).join('')}</select> to <select id="afTo" class="f">${Array.from({ length: nd }, (_, i) => `<option ${i + 1 === Math.min(7, nd) ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>
@@ -305,7 +306,9 @@ function rndIssue(n, rec, ref, b, recs) {
   const P = CUR.P, p = P.byName[n.replace(' (cross-cover)', '')]; if (!p) return '';
   const name = p.name, days = Object.keys(CUR.rb).map(Number).filter(d => CUR.rb[d] === rec);
   if (days.some(d => p.vacAll.has(d) || (p.leaveDays || []).includes(d))) return 'away that weekend';
-  if (Object.entries(rec.blocks).some(([bb, v]) => bb !== b && v.some(m => m.replace(' (cross-cover)', '') === name))) return 'already on another team';
+  const gsPair = x => ['GS1', 'GS2'].includes(x) && ['GS1', 'GS2'].includes(b); // W7: one person may round GS1 and GS2 together
+  if (Object.entries(rec.blocks).some(([bb, v]) => bb !== b && !gsPair(bb) && v.some(m => m.replace(' (cross-cover)', '') === name))) return 'already on another team';
+  if (rec.holiday) { const pool = new Set((rec.callers || []).map(x => x.replace(' (cross-cover)', ''))); if (rec.callers && !pool.has(name)) return 'not on call during this holiday (HD5)'; return ''; }
   if (rec.weekend && p.lvl === 'F' && !rec.fellowWeek) return 'not the fellow’s ICU weekend (W3)';
   if (rec.weekend && p.rotation === 'ICU' && p.lvl !== 'F' && rec.fellowWeek) return 'the fellow’s ICU weekend (W3)';
   if ((rec.tegsOff || []).includes(name)) return 'their T/EGS off weekend (W6)';
@@ -585,19 +588,19 @@ function viewNotes() {
   const st = cur(), k = S.month, roster = Object.keys(st.inputs), mn = MONTHS_LONG[ym(k)[1] - 1], C = cons(k);
   const pend = S.requests.filter(r => r.month_key === k && r.status === 'pending'), denied = S.requests.filter(r => r.month_key === k && r.status === 'denied');
   const otherPend = S.requests.filter(r => r.month_key !== k && r.status === 'pending').length;
-  return `<div class="row"><h2>Requests · ${mn}</h2><span class="muted small">Resident requests come in below. Texted requests can be pasted and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
+  return `<div class="row"><h2>Requests · ${mn}</h2><span class="muted small">Resident requests come in below. Requests that came by text, email or in person can be typed or pasted in and read by Claude. Nothing changes the schedule until a scheduler or chief accepts it.</span></div>
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
     ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><button class="linkish" data-qcal="${r.id}" title="See it on ${esc(r.resident)}'s calendar"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())} 📅</button>${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
       <div class="row" style="margin-top:6px;gap:6px">${canDecide() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px;flex:1">` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
   ${CTX.profile.can_preview ? stressPanel(k) : ''}
   ${adminSwapsHTML(k)}
-  <div class="grid2" style="margin-top:14px"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
+  <div class="grid2" style="margin-top:14px"><div class="panel"><label for="notes" class="small muted">Other requests (by text, email or in person): type or paste them here. Only admins see this box.</label>
     <textarea id="notes">${esc(S.notes[k] || '')}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="interpret" ${sample ? '' : 'disabled'}>Interpret with Claude</button><span class="small muted">${sample ? 'Each note becomes a proposed rule below. Nothing changes until a scheduler accepts it.' : 'Claude isn’t connected.'}</span></div>
     <div style="margin-top:12px">${proposalsHTML()}</div></div>
   <div style="display:grid;gap:14px"><div class="panel"><h3>Accepted rules for ${mn}</h3>
     ${C.length ? `<ul class="issues">${C.map(c => `<li class="ok">${esc(describe(c))}${c.source === 'resident' ? ' <span class="pill">request</span>' : ''}${c.source === 'pd' ? ' <span class="pill good">PD: always honored</span>' : ''} ${canDecide() ? `<button class="btn" data-rm="${c.id}" style="float:right;padding:1px 8px">Remove</button>` : ''}<div class="small muted">${c.source === 'resident' ? 'Accepted' : 'Added'} by ${esc(whoName(c.by))} · ${esc(whenTxt(c.at))}</div></li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}
-    ${denied.length ? `<details><summary class="small">Denied (${denied.length})</summary><ul class="issues">${denied.map(r => `<li class="small">${esc(r.resident)}: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${r.reason ? ' — “' + esc(r.reason) + '”' : ''}<div class="muted">Denied by ${esc(whoName(r.decided_by))} · ${esc(whenTxt(r.decided_at))}</div></li>`).join('')}</ul></details>` : ''}
+    ${denied.length ? `<details><summary class="small">Denied (${denied.length})</summary><ul class="issues">${denied.map(r => `<li class="small">${esc(r.resident)}: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${r.reason ? ' — <b>“' + esc(r.reason) + '”</b>' : ''}<div class="muted">Denied by ${esc(whoName(r.decided_by))} · ${esc(whenTxt(r.decided_at))}</div></li>`).join('')}</ul></details>` : ''}
     <div class="row" style="margin-top:10px"><button class="btn primary" id="applyNotes" ${canEdit() && C.length ? '' : 'disabled'}>Rebuild with these</button></div></div>
   <div class="panel small"><h3>Add a rule by hand</h3><div class="kv">
     <label for="mType">Type</label><select id="mType" class="f"><option value="off">Day off request</option><option value="want">Wants call</option><option value="block">Unavailable (firm)</option><option value="protected">Protected event (no post-call)</option><option value="colorectal">Big colorectal day</option></select>
@@ -621,7 +624,7 @@ function viewRequests() {
     <label for="qNote">Note</label><input id="qNote" type="text" placeholder="optional, e.g. wedding"></div>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="qSend">Send request</button></div>
     ${sample ? `<hr style="margin:14px 0;border:0;border-top:1px solid var(--line)"><label for="qText" class="small muted">Or describe it and Claude fills in the form</label><textarea id="qText" rows="2" placeholder="e.g. I need the weekend of the 12th off for a wedding"></textarea><div class="row" style="margin-top:8px"><button class="btn" id="qClaude">Fill in with Claude</button></div>` : ''}</div>
-  <div class="panel"><h3>My requests</h3>${mine.length ? `<ul class="issues">${mine.map(r => `<li class="${r.status === 'denied' ? 'hard' : r.status === 'accepted' ? 'ok' : 'soft'}">${STATUS_PILL[r.status]} <b>${esc(monthName(r.month_key))}</b>: ${esc((RTYPES.find(t => t[0] === r.type) || [, r.type])[1])}, ${esc(r.days.join(', '))}${r.note ? ' · ' + esc(r.note) : ''}${isLate(r) ? ' <span class="pill warn">late</span>' : ''}${r.status === 'denied' && r.reason ? `<div class="small">Why: ${esc(r.reason)}</div>` : ''}${r.status === 'pending' ? ` <button class="btn" data-qwd="${r.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No requests yet.</p>'}</div></div>
+  <div class="panel"><h3>My requests</h3>${mine.length ? `<ul class="issues">${mine.map(r => `<li class="${r.status === 'denied' ? 'hard' : r.status === 'accepted' ? 'ok' : 'soft'}">${STATUS_PILL[r.status]} <b>${esc(monthName(r.month_key))}</b>: ${esc((RTYPES.find(t => t[0] === r.type) || [, r.type])[1])}, ${esc(r.days.join(', '))}${r.note ? ' · ' + esc(r.note) : ''}${isLate(r) ? ' <span class="pill warn">late</span>' : ''}${r.status === 'denied' && r.reason ? `<div class="small">Why: <b>${esc(r.reason)}</b></div>` : ''}${r.status === 'pending' ? ` <button class="btn" data-qwd="${r.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No requests yet.</p>'}</div></div>
   ${residentSwapsHTML()}`;
 }
 
@@ -760,8 +763,8 @@ function residentSwapsHTML() {
   const TGT = { agreed: 'you agreed; waiting on schedulers', declined: 'you declined', approved: 'approved', denied: 'denied by schedulers', withdrawn: 'withdrawn by them', cancelled: 'cancelled (schedule changed)' };
   return `<div class="panel" style="margin-top:14px"><h3>Swaps</h3><p class="small muted">To ask for a trade, click one of your calls on a published Schedule.</p>
     ${forMe.length ? `<h4 style="margin:10px 0 4px">Asked of you</h4><ul class="issues">${forMe.map(x => `<li class="soft">${swapLine(x)}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swyes="${x.id}" style="padding:1px 10px">Agree</button><button class="btn" data-swno="${x.id}" style="padding:1px 10px">Decline</button><input type="text" data-swwhy="${x.id}" placeholder="Reason (optional)" style="flex:1;min-width:160px"></div></li>`).join('')}</ul>` : ''}
-    ${answered.length ? `<h4 style="margin:10px 0 4px">You answered</h4><ul class="issues">${answered.map(x => `<li class="${['declined', 'denied', 'cancelled', 'withdrawn'].includes(x.status) ? 'hard' : x.status === 'approved' ? 'ok' : 'soft'}">${swapLine(x)} · <b>${esc(TGT[x.status] || x.status)}</b>${x.status === 'approved' ? ` · you now have ${dateLabel(x.month_key, x.day_a)} instead of ${dateLabel(x.month_key, x.day_b)}` : ''}${x.admin_reason ? ` · schedulers: “${esc(x.admin_reason)}”` : ''}</li>`).join('')}</ul>` : ''}
-    <h4 style="margin:10px 0 4px">Yours</h4>${mine.length ? `<ul class="issues">${mine.map(x => `<li class="${['declined', 'denied', 'cancelled'].includes(x.status) ? 'hard' : x.status === 'approved' ? 'ok' : 'soft'}">${swapLine(x)} · <b>${esc(SW_STATUS[x.status])}</b>${x.target_reason ? ` · ${esc(x.target)}: “${esc(x.target_reason)}”` : ''}${x.admin_reason ? ` · schedulers: “${esc(x.admin_reason)}”` : ''}${['pending', 'agreed'].includes(x.status) ? ` <button class="btn" data-swwd="${x.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}</div>`;
+    ${answered.length ? `<h4 style="margin:10px 0 4px">You answered</h4><ul class="issues">${answered.map(x => `<li class="${['declined', 'denied', 'cancelled', 'withdrawn'].includes(x.status) ? 'hard' : x.status === 'approved' ? 'ok' : 'soft'}">${swapLine(x)} · <b>${esc(TGT[x.status] || x.status)}</b>${x.status === 'approved' ? ` · you now have ${dateLabel(x.month_key, x.day_a)} instead of ${dateLabel(x.month_key, x.day_b)}` : ''}${x.admin_reason ? ` · schedulers: <b>“${esc(x.admin_reason)}”</b>` : ''}</li>`).join('')}</ul>` : ''}
+    <h4 style="margin:10px 0 4px">Yours</h4>${mine.length ? `<ul class="issues">${mine.map(x => `<li class="${['declined', 'denied', 'cancelled'].includes(x.status) ? 'hard' : x.status === 'approved' ? 'ok' : 'soft'}">${swapLine(x)} · <b>${esc(SW_STATUS[x.status])}</b>${x.target_reason ? ` · ${esc(x.target)}: <b>“${esc(x.target_reason)}”</b>` : ''}${x.admin_reason ? ` · schedulers: <b>“${esc(x.admin_reason)}”</b>` : ''}${['pending', 'agreed'].includes(x.status) ? ` <button class="btn" data-swwd="${x.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}</div>`;
 }
 function adminSwapsHTML(k) {
   const agreed = S.swaps.filter(x => x.status === 'agreed'), waiting = S.swaps.filter(x => x.status === 'pending'), done = S.swaps.filter(x => ['approved', 'denied'].includes(x.status)).slice(-8).reverse();
@@ -772,7 +775,7 @@ function adminSwapsHTML(k) {
     ${agreed.length ? `<ul class="issues">${agreed.map(x => { const p = check(x); return `<li class="${p ? 'hard' : 'soft'}"><button class="linkish" data-swcal="${x.id}" title="See the trade on a calendar">${swapLine(x)} 📅</button> · ${esc(monthName(x.month_key))}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="small">${p ? '⛔ ' + esc(p) : '✅ Keeps every hard rule'}</div>
       ${isScheduler() ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swok="${x.id}" ${p ? 'disabled' : ''} style="padding:1px 10px">Approve</button><button class="btn" data-swden="${x.id}" style="padding:1px 10px">Deny</button><input type="text" data-swdwhy="${x.id}" placeholder="Reason (they'll see it)" style="flex:1;min-width:180px"></div>` : ''}</li>`; }).join('')}</ul>` : '<p class="small muted">Nothing waiting.</p>'}
     ${waiting.length ? `<details><summary class="small">Waiting on the other resident (${waiting.length})</summary><ul class="issues">${waiting.map(x => `<li class="small">${swapLine(x)}</li>`).join('')}</ul></details>` : ''}
-    ${done.length ? `<details><summary class="small">Recent decisions</summary><ul class="issues">${done.map(x => `<li class="small">${swapLine(x)} · ${esc(x.status)} by ${esc(whoName(x.decided_by))} · ${esc(whenTxt(x.decided_at))}${x.admin_reason ? ' · “' + esc(x.admin_reason) + '”' : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+    ${done.length ? `<details><summary class="small">Recent decisions</summary><ul class="issues">${done.map(x => `<li class="small">${swapLine(x)} · ${esc(x.status)} by ${esc(whoName(x.decided_by))} · ${esc(whenTxt(x.decided_at))}${x.admin_reason ? ' · <b>“' + esc(x.admin_reason) + '”</b>' : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 // ---------- stress test (tester account only; everything stays in memory, nothing is saved) ----------
 function stressPanel(k) {
@@ -941,9 +944,9 @@ function viewPeople() {
     <label for="nEmail">Email</label><input id="nEmail" type="text" placeholder="optional if you copy the link instead">
     <label for="nRoster">Roster name</label><select id="nRoster" class="f"><option value="">— (PD or not on the call roster)</option>${ROSTER_NAMES().map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <label for="nRole">Role</label><select id="nRole" class="f">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-    <label for="nAdmin">Admin</label><input id="nAdmin" type="checkbox" style="justify-self:start;width:auto;margin:0">
-    <label for="nPrac">Practice only</label><label class="small" style="display:flex;gap:8px;align-items:center;margin:0;white-space:normal"><input id="nPrac" type="checkbox" style="width:auto;margin:0"> Signs in to a private practice copy with a walkthrough; can't touch real data</label></div>
-    <label class="small checkline"><input type="checkbox" id="nSend" checked><span>Email them the setup link to pick a username and password (uncheck to copy the link and text it instead)</span></label>
+    <label for="nAdmin">Admin</label><label class="small checkcell"><input id="nAdmin" type="checkbox"> Can manage people and see admin tabs (schedulers, chiefs and the PD always are)</label>
+    <label for="nPrac">Practice only</label><label class="small checkcell"><input id="nPrac" type="checkbox"> Signs in to a private practice copy with a walkthrough; can't touch real data. You can untick it later.</label>
+    <label for="nSend">Setup link</label><label class="small checkcell"><input type="checkbox" id="nSend" checked> Email it to them so they pick a username and password (untick to copy the link and text it instead)</label></div>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="nAdd">Add person</button></div>
     <div id="linkOut" class="small" style="margin-top:8px;word-break:break-all"></div></div>
   ${rosterPanel()}`;
@@ -1056,6 +1059,7 @@ function wire() {
       const [d, c] = i.dataset.att.split('|'); t.trim().split(/\r?\n/).forEach((v, j) => { if (+d + j <= ndays(S.month)) setAtt(S.month, +d + j, c, v); }); saveAtt(S.month); render(); toast('Pasted down from day ' + d + '.'); }; });
   const afRun = clear => { const c = $('#afCol').value, n = clear ? '' : $('#afName').value.trim(), a = +$('#afFrom').value, b = +$('#afTo').value; if (!clear && !n) { toast('Type an attending name first.'); return; }
     for (let d = Math.min(a, b); d <= Math.max(a, b); d++) (c === 'tr' ? ['tam', 'tpm'] : [c]).forEach(cc => setAtt(S.month, d, cc, n)); saveAtt(S.month); logEvent(S.month, `Attendings: ${clear ? 'cleared' : n + ' on'} ${c === 'tr' ? 'Trauma AM+PM' : ATT_COLS.find(x => x[0] === c)[1]}, days ${Math.min(a, b)}–${Math.max(a, b)}`); render(); };
+  on('#attSave', () => { const a = document.activeElement; if (a && a.classList.contains('att-in')) a.dispatchEvent(new Event('change')); saveAtt(S.month, true); toast('Attendings saved.'); });
   on('#afGo', () => afRun(false)); on('#afClear', () => afRun(true));
   document.querySelectorAll('[data-statv]').forEach(b => b.onclick = () => { STATV = b.dataset.statv; try { localStorage.setItem('gs-statv', STATV); } catch (e) {} render(); });
   document.querySelectorAll('[data-imp]').forEach(el => el.onclick = () => showImprove(IMPROVE[+el.dataset.imp]));
