@@ -539,7 +539,7 @@ function highlightMe(root) {
     t.parentNode.replaceChild(frag, t); });
   root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
 }
-const ADMIN_TABS = ['dashboard', 'rules', 'people'];
+const ADMIN_TABS = ['inputs', 'dashboard', 'rules', 'people'];
 function render() {
   let r = route();
   if (ADMIN_TABS.includes(r) && !adminView()) { r = 'schedule'; history.replaceState(null, '', '#schedule'); }
