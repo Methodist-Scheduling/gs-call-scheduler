@@ -381,22 +381,47 @@ function viewDashboard() {
   const upperAsk = ppl.filter(p => [4, 5, 'F'].includes(p.lvl)).reduce((a, p) => a + p.tmin, 0);
   const midCap = ppl.filter(p => p.lvl === 2 || p.lvl === 3).reduce((a, p) => a + p.tmax, 0);
   const improve = improvements(ev, P, ppl); IMPROVE = improve;
-  return `<div class="row"><h2>${monthName(S.month)} stats</h2><span class="muted small">Live from the current draft. Year to date = Jul–Nov actual + any earlier drafts + this month.</span></div>
-  <div class="tiles">
+  return `<div class="row"><h2>${STATV === 'ytd' ? 'Year-to-date' : monthName(S.month)} stats</h2><span class="muted small">Live from the current draft.</span></div>
+  <div class="seg" role="tablist"><button class="${STATV === 'month' ? 'on' : ''}" data-statv="month">${monthName(S.month)}</button><button class="${STATV === 'ytd' ? 'on' : ''}" data-statv="ytd">Year to date</button></div>
+  <div class="tiles" ${STATV === 'ytd' ? 'style="display:none"' : ''}>
     <div class="tile ${hard ? 'crit' : 'good'}"><div class="v">${hard}</div><div class="l">Hard-rule breaks</div></div>
     <div class="tile ${inT === ppl.length ? 'good' : 'warn'}"><div class="v">${inT}/${ppl.length}</div><div class="l">Residents in call target</div></div>
     <div class="tile ${q2 > 8 ? 'warn' : 'good'}"><div class="v">${q2}</div><div class="l">Every-other-day calls</div></div>
     <div class="tile ${minW < 1 ? 'crit' : minW < 2 ? 'warn' : 'good'}"><div class="v">${minW}</div><div class="l">Fewest weekends off (anyone)</div></div>
     <div class="tile ${two > 3 ? 'warn' : 'good'}"><div class="v">${two}</div><div class="l">Two-person days</div></div>
   </div>
-  <div class="grid2"><div class="panel"><h3>Per resident</h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th>Rotation</th><th>Calls vs target</th><th class="n">Calls</th><th class="n">Wkday</th><th class="n">Fri</th><th class="n">Sat</th><th class="n">Sun</th><th class="n">Holiday</th><th class="n">Wknds off</th><th class="n">q2</th><th class="n">YTD calls</th><th class="n">YTD wknd</th><th class="n">Call hrs</th></tr></thead><tbody>
+  ${STATV === 'ytd' ? ytdHTML(P) : ''}
+  <div class="grid2" ${STATV === 'ytd' ? 'style="display:none"' : ''}><div class="panel"><h3>Per resident</h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th>Rotation</th><th>Calls vs target</th><th class="n">Calls</th><th class="n">Wkday</th><th class="n">Fri</th><th class="n">Sat</th><th class="n">Sun</th><th class="n">Holiday</th><th class="n">Wknds off</th><th class="n">q2</th><th class="n">Call hrs</th></tr></thead><tbody>
   ${ppl.map(p => { const s = S2[p.name], lo = p.tmin, hi = p.tmax, mx = 8, off = s.n < lo || s.n > hi;
     return `<tr><td>${esc(p.name)}</td><td>${LEVEL(p.name)}</td><td>${esc(p.rotation)}</td><td><div class="bar" aria-label="${s.n} calls, target ${lo}-${hi}"><div class="band" style="left:${lo / mx * 100}%;width:${Math.max(6, (hi - lo) / mx * 100)}%"></div><div class="dot" style="left:${Math.min(100, s.n / mx * 100)}%;background:${off ? 'var(--warn)' : 'var(--ink)'}"></div></div></td>
-    <td class="n">${s.n}</td><td class="n">${s.n - s.fri - s.sat - s.sun}</td><td class="n">${s.fri}</td><td class="n">${s.sat}</td><td class="n">${s.sun}</td><td class="n">${s.hol}</td><td class="n">${s.wOff}/${s.wTot}</td><td class="n">${s.q2 || ''}</td><td class="n">${(p.ytd.calls || 0) + s.n}</td><td class="n">${(p.ytd.wk || 0) + s.wk}</td><td class="n">${s.n * S.rules.callHours}</td></tr>`; }).join('')}
+    <td class="n">${s.n}</td><td class="n">${s.n - s.fri - s.sat - s.sun}</td><td class="n">${s.fri}</td><td class="n">${s.sat}</td><td class="n">${s.sun}</td><td class="n">${s.hol}</td><td class="n">${s.wOff}/${s.wTot}</td><td class="n">${s.q2 || ''}</td><td class="n">${s.n * S.rules.callHours}</td></tr>`; }).join('')}
   </tbody></table></div><p class="small muted">Call hours use the call-length setting (${S.rules.callHours} h, Rules tab). The 80-hour check needs rotation hours, which aren’t in the data yet.</p></div>
   <div style="display:grid;gap:14px"><div class="panel"><h3>Areas for improvement</h3>${improve.some(x => x.name) ? '<p class="small muted">Click one to see the dates on a calendar.</p>' : ''}<ul class="issues">${improve.length ? improve.map((x, i) => x.name ? `<li class="soft"><button class="linkish" data-imp="${i}">${esc(x.t)}</button></li>` : `<li class="soft">${esc(x.t)}</li>`).join('') : '<li class="ok">Nothing stands out this month.</li>'}</ul></div>
   <div class="panel small"><h3>Do the targets fit the slots?</h3><div class="kv"><span>Upper-level slots</span><b class="num">${st.A.length}</b><span>Upper-level minimum targets</span><b class="num">${upperAsk}</b><span>Mid-level slots</span><b class="num">${st.A.length - two}</b><span>Mid-level maximum targets</span><b class="num">${midCap}</b></div>
   <p class="muted">${upperAsk > st.A.length ? `Targets ask for ${upperAsk - st.A.length} more upper-level calls than there are slots, so some upper levels land under target. ` : ''}${midCap < st.A.length ? `Mids can cover ${midCap} of ${st.A.length} days. A PGY-4 never fills the mid slot (H2), so the rest go to two-person call or a mid over target. ` : ''}</p></div></div></div>`;
+}
+let STATV = (() => { try { return localStorage.getItem('gs-statv') || 'month'; } catch (e) { return 'month'; } })();
+// Year to date: every call from July (actual schedules), earlier drafts, and this month's draft
+function ytdHTML(P) {
+  const [y, m] = ym(S.month), ay = m >= 7 ? y : y - 1, from = `${ay}-07`, D = dataWithDrafts(S.month), st = cur();
+  const months = Object.keys(D.history).filter(h => h >= from && h < S.month).sort();
+  const src = months.map(h => ({ h, rows: D.history[h], draft: !DATA.history[h] })); if (st.A) src.push({ h: S.month, rows: st.A.map((a, i) => ({ d: i + 1, call: [a.U, a.M, a.I].filter(Boolean) })), draft: true });
+  const T = {}, get = n => T[n] = T[n] || { n: 0, wkd: 0, fri: 0, sat: 0, sun: 0, hol: 0, two: 0, wkends: new Set(), months: new Set() };
+  src.forEach(({ h, rows }) => { const [yy, mm] = ym(h), hol = (B.HOLIDAYS[h] || []);
+    rows.forEach(x => { const w = E.dow(yy, mm, x.d); x.call.forEach(n => { const s = get(n); s.n++; s.months.add(h); if (w === 5) s.fri++; else if (w === 6) s.sat++; else if (w === 0) s.sun++; else s.wkd++;
+      if (hol.includes(x.d)) s.hol++; if (x.call.length === 2) s.two++; if (w === 5 || w === 6 || w === 0) { const sat = new Date(yy, mm - 1, x.d + (w === 5 ? 1 : w === 0 ? -1 : 0)); s.wkends.add(sat.toDateString()); } }); }); });
+  const ppl = P.people.filter(p => T[p.name]).sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
+  const grp = p => p.lvl === 1 ? 'I' : (p.lvl === 2 || p.lvl === 3) ? 'M' : 'U';
+  const avg = p => T[p.name].n / Math.max(1, T[p.name].months.size);
+  // within each level group, flag whoever is well above/below the group's average weekends worked
+  const wkMean = {}; ['I', 'M', 'U'].forEach(g => { const v = ppl.filter(p => grp(p) === g).map(p => T[p.name].wkends.size); wkMean[g] = v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0; });
+  const label = src.length ? `${MONTHS[ym(src[0].h)[1] - 1]} ${ym(src[0].h)[0]} – ${monthName(S.month)}` : '';
+  const drafts = src.filter(x => x.draft).map(x => MONTHS[ym(x.h)[1] - 1]);
+  return `<div class="panel"><h3>Year to date · ${esc(label)}</h3><p class="small muted">Actual schedules${drafts.length ? ` + ${drafts.join(', ')} (draft, can still change)` : ''}. Calls only; weekend rounding from past months isn't in the data. Weekends = distinct weekends with a Fri/Sat/Sun call. Red/green = 2+ weekends above/below the average for their level.</p>
+  <div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th class="n">Calls</th><th class="n">Months</th><th class="n">Avg/mo</th><th class="n">Wkday</th><th class="n">Fri</th><th class="n">Sat</th><th class="n">Sun</th><th class="n">Weekends</th><th class="n">Holiday</th><th class="n">Two-person</th><th class="n">Call hrs</th></tr></thead><tbody>
+  ${ppl.map(p => { const s = T[p.name], dw = s.wkends.size - wkMean[grp(p)];
+    return `<tr><td>${esc(p.name)}</td><td>${LEVEL(p.name)}</td><td class="n"><b>${s.n}</b></td><td class="n">${s.months.size}</td><td class="n">${avg(p).toFixed(1)}</td><td class="n">${s.wkd}</td><td class="n">${s.fri}</td><td class="n">${s.sat}</td><td class="n">${s.sun}</td><td class="n" style="${dw >= 2 ? 'color:var(--crit);font-weight:700' : dw <= -2 ? 'color:var(--good);font-weight:700' : ''}" title="Level average ${wkMean[grp(p)].toFixed(1)}">${s.wkends.size}</td><td class="n">${s.hol || ''}</td><td class="n">${s.two || ''}</td><td class="n">${s.n * S.rules.callHours}</td></tr>`; }).join('')}
+  </tbody></table></div></div>`;
 }
 function improvements(ev, P, ppl) {
   const st = ev.stats, out = [], k = S.month, rb = E.roundingBlocks(P, cur().A, B.HOLIDAYS[k] || []);
@@ -919,6 +944,7 @@ function wire() {
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-rreset]').forEach(el => el.onclick = () => { const st2 = cur(); delete st2.rndEdit[el.dataset.rreset]; logEvent(S.month, 'Reset rounding edits'); save(); render(); });
+  document.querySelectorAll('[data-statv]').forEach(b => b.onclick = () => { STATV = b.dataset.statv; try { localStorage.setItem('gs-statv', STATV); } catch (e) {} render(); });
   document.querySelectorAll('[data-imp]').forEach(el => el.onclick = () => showImprove(IMPROVE[+el.dataset.imp]));
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
   on('#swapX', () => { S.trioSwap.xmas = !S.trioSwap.xmas; logEvent(k, 'Swapped which Christmas trio starts'); generate(true); });

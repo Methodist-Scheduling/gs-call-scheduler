@@ -227,3 +227,7 @@ main, .panel, .grid2 > *, .row > * { min-width: 0; }
 .rtag[data-tip] { position: relative; cursor: help; }
 #tipbox { position: fixed; z-index: 9999; max-width: 280px; padding: 6px 9px; border-radius: 6px; background: var(--ink); color: var(--panel); font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; display: none; }
 .rtag .why { border: 0; background: none; padding: 0 0 0 2px; cursor: pointer; font-size: 12px; line-height: 1; }
+
+.seg { display: inline-flex; width: fit-content; border: 1.5px solid var(--accent); border-radius: 999px; overflow: hidden; margin: 4px 0 14px; }
+.seg button { border: 0; background: none; padding: 6px 14px; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--accent); cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
