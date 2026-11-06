@@ -105,7 +105,7 @@ drop policy if exists s_read on public.settings;      create policy s_read on pu
 drop policy if exists s_write on public.settings;     create policy s_write on public.settings for update to authenticated using (public.my_role() in ('scheduler','chief')) with check (public.my_role() in ('scheduler','chief'));
 
 drop policy if exists m_read on public.months;        create policy m_read on public.months for select to authenticated using (public.i_am_active());
-drop policy if exists m_insert on public.months;      create policy m_insert on public.months for insert to authenticated with check (public.my_role() = 'scheduler');
+drop policy if exists m_insert on public.months;      create policy m_insert on public.months for insert to authenticated with check (public.my_role() in ('scheduler','chief'));
 -- schedulers build; chiefs swap and enter picks; the PD approves or sends back. The app limits each role to its own actions.
 drop policy if exists m_update on public.months;      create policy m_update on public.months for update to authenticated using (public.my_role() in ('scheduler','chief','pd')) with check (public.my_role() in ('scheduler','chief','pd'));
 

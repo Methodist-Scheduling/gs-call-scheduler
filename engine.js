@@ -11,7 +11,7 @@
     pgy4MidSlot: false, // NOT in v1.1: let a PGY-4 fill the mid slot (happened 19 times Jul–Nov) — ask chiefs
     sameServiceBlocked: false, // NOT a stated rule: optional extension of H15 to two residents on the same service — ask chiefs
     q3WindowMax: 9, // ACGME: no more than every 3rd night avg over 28 days
-    weights: { target: 60, q2: 30, gap3: 4, noWeekendOff: 220, oneWeekendOff: 45, backToBack: 120, bookend: 70, gs2: 12, protected: 90, request: 80,
+    weights: { target: 60, q2: 30, gap3: 4, noWeekendOff: 220, oneWeekendOff: 45, backToBack: 120, bookend: 70, gs2: 40, protected: 90, request: 80,
       wkndFair: 6, holFair: 6, twoPerson: 45, twoFair: 10, typeMix: 2, spread: 1 }
   };
   const dow = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 Sun..6 Sat

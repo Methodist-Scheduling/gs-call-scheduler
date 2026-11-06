@@ -145,13 +145,13 @@ function connect() {
 adoptSettings(CTX.settings);
 (CTX.versions || []).forEach(v => { const st = S.M[v.month_key]; if (st) st.versions.push({ n: v.n, at: v.created_at, status: v.status, A: v.schedule, changed: v.changed }); });
 (CTX.logs || []).slice().reverse().forEach(l => { const st = S.M[l.month_key]; if (st) st.log.push({ at: l.at, role: '', text: l.text }); });
-if (S.realRole === 'scheduler' && !existing.has('2026-12') && S.M['2026-12'].A) save('2026-12');
+if (['scheduler', 'chief'].includes(S.realRole) && !existing.has('2026-12') && S.M['2026-12'].A) save('2026-12');
 
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3400); }
-const isScheduler = () => S.role === 'Scheduler';
+const isScheduler = () => S.role === 'Scheduler' || S.role === 'Chief'; // chiefs can do everything the PGY-4 schedulers do
 const canEdit = () => isScheduler() && !['Published', 'PD review'].includes(cur().status);
 const canSwap = () => S.role === 'Scheduler' || S.role === 'Chief';
 const monthName = k => { const [y, m] = ym(k); return `${MONTHS_LONG[m - 1]} ${y}`; };
@@ -371,9 +371,9 @@ function viewRules() {
 function viewApproval() {
   const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role;
   let actions = '';
-  if (r === 'Scheduler' && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
+  if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
   if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
-  if (r === 'Scheduler' && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
+  if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
   return `<div class="row"><h2>Approval · ${monthName(S.month)}</h2><span class="muted small">The PGY-4 schedulers build, the PD approves, then it goes out. Every version is kept. Swaps after publishing: a scheduler or PGY-5 chief approves (SW3).</span></div>
   <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check the dashboard', 'PD approves or sends back', 'Shared as the calendar'][i]}</span></div>`).join('')}</div>
   <div class="panel"><div class="row">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
@@ -463,7 +463,7 @@ async function loadPeople() { const { data, error } = await sb.functions.invoke(
 function viewPeople() {
   if (!S.isAdmin) return '<div class="panel">Only admins manage accounts.</div>';
   if (PEOPLE === null) { loadPeople(); return '<div class="panel">Loading accounts…</div>'; }
-  const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief'], ['pd', 'Program director'], ['resident', 'Resident']];
+  const ROLES = [['scheduler', 'Scheduler (PGY-4)'], ['chief', 'PGY-5 chief (same powers as scheduler)'], ['pd', 'Program director'], ['resident', 'Resident']];
   return `<div class="row"><h2>People</h2><span class="muted small">Admins add people by name and email. Each person picks their own username and password from the link they get.</span></div>
   ${peopleMsg ? `<div class="banner">${esc(peopleMsg)}</div>` : ''}
   <div class="grid2"><div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Admin</th><th>Active</th><th></th></tr></thead><tbody>
