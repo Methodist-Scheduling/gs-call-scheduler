@@ -21,13 +21,16 @@
       if (byBot) rows.forEach(r => emit(t, r));
       try { hooks.onWrite && hooks.onWrite(t, op, clone(rows), byBot); } catch (e) { console.error(e); }
     };
+    const DEFAULTS = { // what the database fills in on insert
+      swaps: x => ({ status: 'pending', target_reason: '', admin_reason: '', requester_seen: false, target_id: (T.profiles.find(p => p.roster_name === x.target) || {}).id || null }),
+      requests: () => ({ reason: '' }), activity_log: () => ({ at: now() }) };
     function q(t) {
       const f = []; let ord = null, lim = null, op = 'select', payload = null, upOpts = null;
       const rowsOf = () => t === 'month_status' ? statusView() : (T[t] = T[t] || []);
       const match = () => rowsOf().filter(r => f.every(fn => fn(r)));
       const run = () => {
         if (op === 'select') { let r = match().map(clone); if (ord) r.sort((a, b) => (a[ord.c] > b[ord.c] ? 1 : a[ord.c] < b[ord.c] ? -1 : 0) * (ord.asc ? 1 : -1)); if (lim) r = r.slice(0, lim); return { data: r, error: null }; }
-        if (op === 'insert') { const list = (Array.isArray(payload) ? payload : [payload]).map(x => Object.assign({ id: nid++, created_at: now() }, clone(x))); rowsOf().push(...list); afterWrite(t, list, 'insert', false); return { data: list.map(clone), error: null }; }
+        if (op === 'insert') { const list = (Array.isArray(payload) ? payload : [payload]).map(x => Object.assign({ id: nid++, created_at: now() }, DEFAULTS[t] ? DEFAULTS[t](x) : {}, clone(x))); rowsOf().push(...list); afterWrite(t, list, 'insert', false); return { data: list.map(clone), error: null }; }
         if (op === 'upsert') { const list = (Array.isArray(payload) ? payload : [payload]).map(clone), out = [];
           list.forEach(x => { const ex = rowsOf().find(r => keyOf(t, r) === keyOf(t, x)); if (ex) { Object.assign(ex, x); out.push(ex); } else { const n = Object.assign({ id: nid++, created_at: now() }, x); rowsOf().push(n); out.push(n); } });
           afterWrite(t, out, 'upsert', false); return { data: out.map(clone), error: null }; }
@@ -70,14 +73,19 @@
   function seed(profile, user, ref, role) {
     const D = ref.data, pre = ref.pre, pgy = D.pgy, names = Object.keys(D.rotations['2026-12'] || {});
     const roster = names.filter(n => pgy[n] !== undefined);
-    const me = Object.assign({}, profile, { role, is_admin: true, can_preview: false, practice_only: true });
-    const others = roster.filter(n => n !== profile.roster_name).map((n, i) => ({ id: 'p' + i, display_name: n + ' (practice)', roster_name: n, username: n.toLowerCase(), active: true, role: pgy[n] === 4 ? 'scheduler' : pgy[n] === 5 ? 'chief' : 'resident', is_admin: [4, 5].includes(pgy[n]) }));
+    const me = Object.assign({}, profile, { role, is_admin: role !== 'resident', can_preview: false, practice_only: true });
+    if (role === 'resident' && !me.roster_name) me.roster_name = names.find(n => pgy[n] === 1) || names[0];
+    const others = roster.filter(n => n !== me.roster_name).map((n, i) => ({ id: 'p' + i, display_name: n + ' (practice)', roster_name: n, username: n.toLowerCase(), active: true, role: pgy[n] === 4 ? 'scheduler' : pgy[n] === 5 ? 'chief' : 'resident', is_admin: [4, 5].includes(pgy[n]) }));
     others.push({ id: 'ppd', display_name: 'Program Director (practice)', roster_name: null, username: 'pd', active: true, role: 'pd', is_admin: true });
     const T = { profiles: [me].concat(others), reference: Object.entries(ref).map(([key, value]) => ({ key, value })), settings: [{ id: 1, rules: {}, trio_swap: { xmas: false, ny: false }, people: {} }],
       months: [], versions: [], activity_log: [], requests: [], swaps: [], month_notes: [], published: [], published_history: [], seen_versions: [], attendings: [] };
     const A = pre.A, low = roster.filter(n => [1, 2, 3].includes(pgy[n]));
     const pick = (arr, i) => arr[i % arr.length];
-    if (role === 'pd') {
+    if (role === 'resident') { // December is out; residents see the published copy
+      T.months.push({ key: '2026-12', status: 'Published', data: { A: clone(A) }, updated_at: now() });
+      T.published.push({ month_key: '2026-12', version: 1, schedule: clone(A), rnd: null, published_at: now() });
+      T.published_history.push({ month_key: '2026-12', version: 1, schedule: clone(A), rnd: null, published_at: now() });
+    } else if (role === 'pd') {
       T.months.push({ key: '2026-12', status: 'PD review', data: { A: clone(A) }, updated_at: now() });
       T.versions.push({ month_key: '2026-12', n: 1, status: 'PD review', schedule: clone(A), changed: null, created_at: now() });
       T.activity_log.push({ month_key: '2026-12', at: now(), text: 'Lainie (Scheduler): Sent to the PD for review' });
@@ -86,7 +94,7 @@
       const offs = [[pick(low, 1), 'off', [12], 'Brother’s wedding'], [pick(low, 3), 'off', [19, 20], 'Out of town'], [pick(low, 5), 'want', [6], 'Trading for a weekend later'], [pick(low, 7), 'off', [31], 'New Year’s with family'], [pick(low, 9), 'protected', [16], 'Mock orals']];
       offs.forEach(([n, type, days, note], i) => { const p = others.find(o => o.roster_name === n); T.requests.push({ id: 900 + i, month_key: '2026-12', resident: n, type, days, note, status: 'pending', source: 'resident', reason: '', created_by: p ? p.id : 'x', created_at: new Date(Date.now() - (6 - i) * 3600e3).toISOString() }); });
     }
-    return { T, me };
+    return { T, me, others };
   }
 
   // ---------- coach ----------
@@ -101,10 +109,17 @@
       { id: 'publish', tab: 'approval', t: 'Publish it', d: 'Approval tab: “Publish”. Residents would now see it. About 10 seconds later, a couple of residents ask to trade calls.' },
       { id: 'swaps', tab: 'notes', t: 'Handle the swap requests', d: 'Requests tab → Swaps: both residents already agreed. Approve or deny (the app shows any rule a swap would break).' }
     ],
+    res: [
+      { id: 'mine', tab: 'schedule', t: 'Find your calls', d: 'Schedule tab: your name is highlighted. Tap “My calls only” to see just your days (and any weekend rounding).' },
+      { id: 'req', tab: 'notes', t: 'Ask for a day off', d: 'Requests tab: pick January, choose “Day off”, enter a day and a short reason, Send. A pretend scheduler answers in about 10 seconds.' },
+      { id: 'trade', tab: 'schedule', t: 'Ask to trade a call', d: 'Schedule tab: tap one of YOUR calls in December, pick who to trade with and which of their days you’d take, Send. They answer, then a scheduler approves, about 10 seconds each.' },
+      { id: 'answer', tab: 'notes', t: 'Answer a trade someone asked you for', d: 'Requests tab → Trades: another resident wants one of your calls. Agree or decline. If you agree, a scheduler still has to approve it.' }
+    ],
     pd: [
       { id: 'open', tab: 'approval', t: 'Open the schedule you were sent', d: 'Approval tab: the schedulers sent December for your review. Look over the calendar on the Schedule tab too.' },
       { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Send it back with a note to see what happens: the pretend schedulers return a changed version in about 10 seconds (changed days are listed for you). Then approve.' },
       { id: 'att', tab: 'inputs', t: 'Enter the attendings', d: 'Inputs tab → Attendings (top). Use the Fill bar: pick “Trauma AM + PM”, type a name, choose days 1–7, Fill. Do SICU and EGS/TBU the same way. Fill at least a week.' },
+      { id: 'req', tab: 'notes', t: 'Make a request (yours are always honored)', d: 'Requests tab → “Add a rule by hand”: give anyone a day off, block a day, or protect an event, for a resident or for yourself. Anything you add is always honored, and the schedulers see it marked “PD”. Try one, e.g. a resident off on Dec 18.' },
       { id: 'cal', tab: 'schedule', t: 'See them on the calendar', d: 'Schedule tab: attendings now show under each day, for everyone, and on the PDF.' },
       { id: 'stats', tab: 'dashboard', t: 'Look at Stats', d: 'This month and Year to date. Hover any number or bar for details.' },
       { id: 'rules', tab: 'rules', t: 'Rules', d: 'You can change any setting here (targets, limits, two-person exceptions). Every rule is written out in plain English below.' },
@@ -114,8 +129,8 @@
 
   window.GSPractice = {
     start({ realSb, user, profile, ref, role, canLeave }) {
-      const { T, me } = seed(profile, user, ref, role);
-      const kind = role === 'pd' ? 'pd' : 'sched', steps = STEPS[kind], done = new Set(), visited = new Set();
+      const { T, me, others } = seed(profile, user, ref, role);
+      const kind = role === 'pd' ? 'pd' : role === 'resident' ? 'res' : 'sched', steps = STEPS[kind], done = new Set(), visited = new Set();
       const st = { seedA: JSON.stringify(ref.pre.A), sentOnce: false, pdBusy: false, revised: false, swapsMade: false };
       let fake;
       const month = () => T.months.find(m => m.key === '2026-12');
@@ -134,8 +149,9 @@
                 const sendBack = !st.sentOnce && Math.random() < 0.6; st.sentOnce = true;
                 if (sendBack) { const d = weekdays()[Math.floor(Math.random() * 6) + 4], n = nameOf(A, d, 'M') || nameOf(A, d, 'I');
                   fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Scheduler review' });
-                  msg('The PD sent it back', `“Can <b>${n}</b> be off on <b>Dec ${d}</b>? Family thing. Otherwise looks good.”<br><br>Click ${n}’s name on Dec ${d} on the Schedule tab to swap someone in (or add an “off” request and rebuild), then send it to the PD again.`);
-                } else { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Approved' }); msg('The PD approved it', 'Go to the Approval tab and publish it when you’re ready.'); }
+                  fake.bot('activity_log', 'insert', { user_id: 'ppd', month_key: '2026-12', text: `Program Director (PD): Sent back: Can ${n} be off on Dec ${d}? Family thing. Otherwise looks good.` });
+                  msg('The PD sent it back', `“Can <b>${n}</b> be off on <b>Dec ${d}</b>? Family thing. Otherwise looks good.”<br><br>Her comment stays at the top of the Schedule tab and under “PD comments” on Approval, so you won’t lose it. Click ${n}’s name on Dec ${d} on the Schedule tab to swap someone in (or add an “off” request and rebuild), then send it to the PD again.`);
+                } else { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Approved' }); fake.bot('activity_log', 'insert', { user_id: 'ppd', month_key: '2026-12', text: 'Program Director (PD): PD approved; sent to schedulers to publish: Looks great, thanks.' }); msg('The PD approved it', 'Go to the Approval tab and publish it when you’re ready.'); }
               }, BOT_DELAY); }
             if (kind === 'sched' && m.status === 'Approved') done.add('approved');
             if (kind === 'sched' && m.status === 'Published') { done.add('approved'); done.add('publish');
@@ -144,6 +160,15 @@
             if (kind === 'pd' && (m.status === 'Approved' || m.status === 'Published')) { done.add('decide');
               if (m.status === 'Approved') setTimeout(() => { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Published' }); msg('The schedulers published it', 'Residents can now see December. Next on your list: attendings.'); }, BOT_DELAY); }
           });
+          if (t === 'requests' && op === 'insert' && kind === 'pd' && rows.some(r => r.source === 'pd')) done.add('req');
+          if (kind === 'res' && t === 'requests' && op === 'insert') { done.add('req'); rows.forEach(r => setTimeout(() => {
+              const ok = Math.random() < 0.75; fake.bot('requests', 'update', x => x.id === r.id, { status: ok ? 'accepted' : 'denied', decided_by: 'p0', decided_at: now(), reason: ok ? '' : 'That day is already short-staffed. Can you pick another?' });
+              msg(ok ? 'Your request was accepted' : 'Your request was denied', ok ? 'A scheduler accepted it. It’ll be built into that month’s schedule.' : 'A scheduler denied it with a reason (you can see it on the Requests tab). Try another day if you like.'); }, BOT_DELAY)); }
+          if (kind === 'res' && t === 'swaps' && op === 'insert') rows.forEach(x => { if (x.requester !== me.roster_name) return; done.add('trade-sent');
+              setTimeout(() => { fake.bot('swaps', 'update', y => y.id === x.id, { status: 'agreed', target_at: now() }); msg(`${x.target} agreed to trade`, 'Now a scheduler has to approve it. About 10 more seconds…'); 
+                setTimeout(() => approveSwap(x.id), BOT_DELAY); }, BOT_DELAY); });
+          if (kind === 'res' && t === 'swaps' && op === 'update') rows.forEach(x => { if (x.target === me.roster_name && x.requester !== me.roster_name && x.status !== 'pending') { done.add('answer');
+              if (x.status === 'agreed') setTimeout(() => approveSwap(x.id), BOT_DELAY); } });
           if (t === 'attendings') { const a = (T.attendings.find(x => x.month_key === '2026-12') || {}).data || {}; if (Object.keys(a).length >= 7) done.add('att'); }
           refresh();
         }
@@ -181,6 +206,26 @@
         msg(out.length > 1 ? 'Two swap requests came in' : 'A swap request came in', `${out.map(x => `<b>${x.requester}</b> ↔ <b>${x.target}</b> (Dec ${x.day_a} / Dec ${x.day_b})`).join('<br>')}<br><br>Both residents already agreed. Decide them on the Requests tab.`);
       }
 
+      function approveSwap(id) {
+        const x = T.swaps.find(y => y.id === id); if (!x || x.status !== 'agreed') return; const si = { U: 0, M: 1, I: 2 }[x.slot];
+        const pub = T.published.find(p => p.month_key === x.month_key); const A = clone(pub.schedule); A[x.day_a - 1][si] = x.target; A[x.day_b - 1][si] = x.requester;
+        fake.bot('swaps', 'update', y => y.id === id, { status: 'approved', decided_by: 'p0', decided_at: now() });
+        const v = pub.version + 1; fake.bot('published_history', 'insert', { month_key: x.month_key, version: v, schedule: A, rnd: null, published_at: now() });
+        fake.bot('published', 'update', p => p.month_key === x.month_key, { version: v, schedule: A, published_at: now() });
+        fake.bot('months', 'update', m => m.key === x.month_key, { data: Object.assign({}, month().data, { A }) });
+        msg('Trade approved', `A scheduler approved <b>${x.requester}</b> ↔ <b>${x.target}</b> (Dec ${x.day_a} / Dec ${x.day_b}). The schedule now shows the change.`);
+        if (x.requester === me.roster_name) { done.add('trade'); if (!st.incoming) { st.incoming = true; setTimeout(incomingTrade, BOT_DELAY); } }
+      }
+      function incomingTrade() { // another resident asks to trade one of your calls
+        const pub = T.published.find(p => p.month_key === '2026-12'), A = pub.schedule, myName = me.roster_name, hard = engineHard();
+        const si = A.findIndex(a => a.includes(myName)) >= 0 ? A.map(a => a.indexOf(myName)).find(i => i >= 0) : 2, slot = ['U', 'M', 'I'][si];
+        const mine = A.map((a, i) => a[si] === myName ? i + 1 : 0).filter(Boolean), base = hard(A); let found = null;
+        for (const da of A.map((_, i) => i + 1)) { if (found) break; const other = A[da - 1][si]; if (!other || other === myName || A[da - 1].includes(myName)) continue;
+          for (const db of mine) { if (Math.abs(da - db) < 3) continue; const B2 = clone(A); B2[da - 1][si] = myName; B2[db - 1][si] = other; if (hard(B2) > base) continue; found = { da, db, other }; break; } }
+        if (!found) return; const op = T.profiles.find(p => p.roster_name === found.other);
+        fake.bot('swaps', 'insert', { month_key: '2026-12', slot, day_a: found.da, day_b: found.db, requester: found.other, target: myName, requester_id: op ? op.id : null, target_id: me.id, note: 'Friend’s wedding that weekend', status: 'pending', target_reason: '', admin_reason: '', requester_seen: false });
+        msg(`${found.other} wants to trade with you`, `They’d take your call on <b>Dec ${found.db}</b> and you’d take theirs on <b>Dec ${found.da}</b>. Answer it on the Requests tab.`);
+      }
       fake = makeFake(T, realSb, bots);
 
       // ---------- banner + checklist ----------
@@ -196,6 +241,9 @@
           if (!T.requests.some(r => r.status === 'pending')) done.add('req');
           if (visited.has('inputs')) done.add('inputs'); if (visited.has('dashboard')) done.add('stats');
           if (st.swapsMade && T.swaps.length && !T.swaps.some(x => x.status === 'agreed')) done.add('swaps');
+        } else if (kind === 'res') {
+          if (document.querySelector('.mineToggle.on')) done.add('mine');
+          if (!st.incoming && done.has('trade-sent') && 0) {}
         } else {
           if (visited.has('approval')) done.add('open');
           if (done.has('att') && visited.has('schedule') && h === 'schedule') done.add('cal');
@@ -204,17 +252,20 @@
         const next = steps.find(s => !done.has(s.id)), n = steps.filter(s => done.has(s.id)).length;
         document.querySelectorAll('nav.tabs a').forEach(a => a.classList.toggle('coach-next', !!next && a.getAttribute('href') === '#' + next.tab && !collapsed));
         box.classList.toggle('min', collapsed);
-        box.innerHTML = `<div class="coach-h"><b>Practice walkthrough</b><span class="muted small">${n}/${steps.length}</span><span class="spacer"></span><button class="btn" data-c="min" aria-label="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '▴' : '▾'}</button></div>
+        const html = `<div class="coach-h"><b>Practice walkthrough</b><span class="muted small">${n}/${steps.length}</span><span class="spacer"></span><button class="btn" data-c="min" aria-label="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '▴' : '▾'}</button></div>
           ${collapsed ? '' : `<ol class="coach-list">${steps.map(s => `<li class="${done.has(s.id) ? 'ok' : s === next ? 'now' : ''}">${done.has(s.id) ? '✓' : s === next ? '→' : '·'} ${s.t}${s === next ? `<div class="small">${s.d}${s.tab && h !== s.tab ? ` <a href="#${s.tab}">Go there</a>` : ''}</div>` : ''}</li>`).join('')}</ol>
           ${next ? '' : '<p class="small"><b>That’s the whole loop.</b> Poke around anything else, or reset to try another path.</p>'}
           <div class="row small" style="gap:6px;margin-top:8px"><button class="btn" data-c="reset">Reset practice</button>${canLeave ? '<button class="btn" data-c="leave">Leave practice</button>' : ''}</div>`}`;
+        if (html === box._last) return; box._last = html; box.innerHTML = html;
         box.querySelector('[data-c="min"]').onclick = () => { collapsed = !collapsed; refresh(); };
         const r = box.querySelector('[data-c="reset"]'); if (r) r.onclick = () => location.reload();
         const l = box.querySelector('[data-c="leave"]'); if (l) l.onclick = () => { try { sessionStorage.removeItem('gs-practice'); } catch (e) {} location.hash = '#schedule'; location.reload(); };
       }
       window.addEventListener('hashchange', () => setTimeout(refresh, 50));
-      setTimeout(refresh, 300);
-      setTimeout(() => msg(`Welcome to practice, ${String(profile.display_name || '').split(' ')[0]}`, kind === 'pd'
+      setTimeout(refresh, 300); setInterval(refresh, 1500);
+      setTimeout(() => msg(`Welcome to practice, ${String(profile.display_name || '').split(' ')[0]}`, kind === 'res'
+        ? 'This is a private practice copy: try anything, nothing is saved or seen by anyone. December is published. The checklist (bottom right) shows you how to find your calls, ask for a day off, and trade calls. Pretend residents and schedulers answer in about 10 seconds.'
+        : kind === 'pd'
         ? 'This is a private practice copy: try anything, nothing is saved or seen by anyone. The schedulers just sent you December. The checklist (bottom right) walks you through approving it and entering the month’s attendings.'
         : 'This is a private practice copy: try anything, nothing is saved or seen by anyone. Five residents have sent requests for December. The checklist (bottom right) walks you through building, sending to the PD, publishing and handling swaps. Pretend people answer in about 10 seconds.'), 600);
       return { sb: fake, profile: me, months: clone(T.months), versions: clone(T.versions).map(v => Object.assign({}, v)), logs: clone(T.activity_log) };

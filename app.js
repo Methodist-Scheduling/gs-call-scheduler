@@ -111,6 +111,7 @@ function generate(keepLocks, k) {
     st.A = best.A.map(a => ({ U: a.U || null, M: a.M || null, I: a.I || null })); st.stale = false;
     st.flags = keepLocks ? Object.fromEntries(Object.entries(st.flags || {}).filter(([kk]) => st.locks[kk] !== undefined)) : {};
     logEvent(k, keepLocks ? 'Regenerated around locked cells' : 'Generated a fresh draft');
+    if (k === S.month) saveVersion(keepLocks ? 'Rebuilt' : 'New draft');
     save(k); render(); toast(best.ev.hard ? 'Done, but some hard rules could not be met. See the list.' : 'Done. All hard rules met.');
   }, 30);
 }
@@ -154,6 +155,7 @@ function connect() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'swaps' }, () => { loadSwaps().then(render); })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'activity_log' }, p => { const l = p.new; if (!l || l.user_id === me.id || !l.month_key || !S.M[l.month_key]) return; S.M[l.month_key].log.push({ at: l.at || new Date().toISOString(), role: '', text: l.text }); render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendings' }, () => { if (attPending) return; loadAtt().then(() => { if (!document.activeElement || !document.activeElement.classList.contains('att-in')) render(); }); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'published' }, () => { if (!S.isAdmin) loadPublished().then(pub => { render(); publishAlerts(pub); }); }).subscribe();
 }
@@ -175,12 +177,24 @@ const whenTxt = t => t ? new Date(t).toLocaleString(undefined, { month: 'short',
 async function loadNames() { const { data } = await sb.from('profiles').select('id,display_name,roster_name,active'); S.names = Object.fromEntries((data || []).map(p => [p.id, p.display_name])); S.acct = Object.fromEntries((data || []).filter(p => p.roster_name && p.active).map(p => [p.roster_name, p.id])); }
 async function loadSwaps() { const { data } = await sb.from('swaps').select('*').order('created_at'); S.swaps = data || []; }
 // ---------- attendings (Trauma AM/PM, SICU, EGS/TBU per day; own table so the PD can edit and everyone can read) ----------
-S.att = {}; let attPending = 0; const attTimers = {};
+S.att = {}; let attPending = 0; const attTimers = {}, attDirty = {};
 const ATT_COLS = [['tam', 'Trauma AM'], ['tpm', 'Trauma PM'], ['sicu', 'SICU'], ['egs', 'EGS/TBU']];
 const canAtt = () => isScheduler() || S.role === 'Program Director';
-async function loadAtt() { const { data, error } = await sb.from('attendings').select('month_key,data'); if (!error) { S.att = {}; (data || []).forEach(r => S.att[r.month_key] = r.data || {}); } }
-function saveAtt(k) { clearTimeout(attTimers[k]); attTimers[k] = setTimeout(async () => { attPending++; const { error } = await sb.from('attendings').upsert({ month_key: k, data: S.att[k] || {}, updated_at: new Date().toISOString() }); setTimeout(() => attPending--, 1500); if (error) toast('Attendings not saved: ' + error.message); }, 500); }
-function setAtt(k, d, col, v) { const m = S.att[k] = S.att[k] || {}; const day = m[d] = Object.assign({}, m[d]); v = String(v || '').trim(); if (v) day[col] = v; else delete day[col]; if (!Object.keys(day).length) delete m[d]; }
+async function loadAtt() { const { data, error } = await sb.from('attendings').select('month_key,data'); if (!error) { S.att = {}; (data || []).forEach(r => S.att[r.month_key] = r.data || {}); Object.entries(attDirty || {}).forEach(([k, dd]) => Object.entries(dd).forEach(([dc, v]) => { const [d, c] = dc.split('|'); setAtt(k, +d, c, v, true); })); } }
+// Save only the cells this person changed, merged into the latest copy, so two people editing (or a stale screen) never wipe each other's entries
+function saveAtt(k) { clearTimeout(attTimers[k]); attTimers[k] = setTimeout(async () => { attPending++;
+  const dirty = attDirty[k] || {}; attDirty[k] = {};
+  const { data: row } = await sb.from('attendings').select('data').eq('month_key', k).maybeSingle();
+  const merged = JSON.parse(JSON.stringify((row && row.data) || {}));
+  Object.entries(dirty).forEach(([dc, v]) => { const [d, c] = dc.split('|'); const day = merged[d] = Object.assign({}, merged[d]); if (v) day[c] = v; else delete day[c]; if (!Object.keys(day).length) delete merged[d]; });
+  const { error } = await sb.from('attendings').upsert({ month_key: k, data: merged, updated_at: new Date().toISOString() });
+  setTimeout(() => attPending--, 1500);
+  if (error) { toast('Attendings not saved: ' + error.message); attDirty[k] = Object.assign(dirty, attDirty[k]); return; }
+  S.att[k] = Object.assign(merged, {}); Object.entries(attDirty[k]).forEach(([dc, v]) => { const [d, c] = dc.split('|'); setAtt(k, +d, c, v, true); }); // keep anything typed while saving
+}, 500); }
+function setAtt(k, d, col, v, noDirty) { const m = S.att[k] = S.att[k] || {}; const day = m[d] = Object.assign({}, m[d]); v = String(v || '').trim(); if (v) day[col] = v; else delete day[col]; if (!Object.keys(day).length) delete m[d];
+  if (!noDirty) { attDirty[k] = attDirty[k] || {}; attDirty[k][d + '|' + col] = v; }
+  if (v) { const dl = document.getElementById('attNames'); if (dl && ![...dl.options].some(o => o.value === v)) { const o = document.createElement('option'); o.value = v; dl.appendChild(o); } } } // new names show up in suggestions right away
 function attLines(k, d) { const a = (S.att[k] || {})[d]; if (!a) return []; const out = [];
   if (a.tam || a.tpm) out.push('Trauma: ' + (a.tam && a.tpm && a.tam !== a.tpm ? `${a.tam} AM / ${a.tpm} PM` : (a.tam || a.tpm) + (a.tam && a.tpm ? '' : a.tam ? ' (AM)' : ' (PM)')));
   if (a.sicu) out.push('SICU: ' + a.sicu); if (a.egs) out.push('EGS/TBU: ' + a.egs); return out; }
@@ -257,6 +271,7 @@ function calendarHTML(A, k, o) {
   const adjDay = (k2, d, edit) => {
     const [y2, m2] = ym(k2), w = E.dow(y2, m2, d), wk = w === 0 || w === 6 || w === 5, st2 = S.M[k2];
     let trio = st2 && st2.A && st2.A[d - 1] ? [['U', st2.A[d - 1].U], ['M', st2.A[d - 1].M], ['I', st2.A[d - 1].I]] : null;
+    if (!trio) { const hl = holidayLocks(k2).find(([x]) => x === d); if (hl) trio = [['U', hl[1][2]], ['M', hl[1][1]], ['I', hl[1][0]]]; } // holiday trios are known before that month is built
     if (!trio && DATA.history[k2]) { const x = DATA.history[k2].find(r => r.d === d); if (x) trio = x.call.map(n => [DATA.pgy[n] === 1 ? 'I' : [2, 3].includes(DATA.pgy[n]) ? 'M' : 'U', n]); }
     const can = edit && o.click && st2 && st2.A;
     const chips = (trio || []).map(([sl, n]) => n ? `<button class="chip ${sl}" data-k="${k2}" data-d="${d}" data-s="${sl}" ${can ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)} · ${esc(monthName(k2))}${can ? ' (click to edit there)' : ''}">${esc(n)}</button>` : (sl === 'M' ? `<button class="chip empty" data-k="${k2}" data-d="${d}" data-s="M" ${can ? '' : 'disabled'}>two-person call</button>` : '')).join('');
@@ -302,7 +317,7 @@ function roundingTable(recs, recLabel, BL, k) {
   const st = cur(), ed = canEdit() && adminView(), roster = ROSTER_NAMES().filter(n => CUR.P.byName[n] && !CUR.P.byName[n].excluded || CUR.P.byName[n] && ['Transplant'].includes(CUR.P.byName[n].rotation));
   return `<div class="tablewrap"><table class="rtable"><thead><tr><th>Days</th>${BL.map(b => `<th>${b}</th>`).join('')}${ed ? '<th></th>' : ''}</tr></thead><tbody>${recs.map(x => { const ref = x.d, edits = (st.rndEdit || {})[ref] || {};
     return `<tr><td>${recLabel(x)}</td>${BL.map(b => { const v = x.r.blocks[b] || [];
-      const tags = v.map((n, i) => { const why = adminView() ? rndIssue(n, x.r, ref, b, recs) : ''; return `<span class="rtag ${why ? 'bad' : ''}" ${why ? `data-tip="${esc(why)}"` : ''}>${esc(n.replace(' (cross-cover)', '*'))}${why ? `<button class="why" data-why="${esc(why)}" aria-label="Why is this red?">⛔</button>` : ''}${ed ? `<button class="rx" data-rx="${ref}|${b}|${i}" aria-label="Remove ${esc(n)}">✕</button>` : ''}</span>`; }).join(' ');
+      const tags = v.map((n, i) => { const why = adminView() ? rndIssue(n, x.r, ref, b, recs) : ''; return `<span class="rtag ${why ? 'bad' : ''}" ${why ? `data-tip="${esc(why)}" data-why="${esc(why)}" role="button" tabindex="0" aria-label="${esc(n)}: ${esc(why)}"` : ''}>${esc(n.replace(' (cross-cover)', '*'))}${ed ? `<button class="rx" data-rx="${ref}|${b}|${i}" aria-label="Remove ${esc(n)}">✕</button>` : ''}</span>`; }).join(' ');
       const add = ed ? `<select class="radd" data-ra="${ref}|${b}" aria-label="Add to ${b}"><option value="">+</option>${roster.filter(n => !v.some(m => m.replace(' (cross-cover)', '') === n)).map(n => { const why = rndIssue(n, x.r, ref, b, recs); return `<option value="${esc(n)}">${esc(n)}${why ? ' — ' + esc(why) : ''}</option>`; }).join('')}</select>` : '';
       return `<td class="${edits[b] ? 'edited' : ''}">${tags || '<span class="muted">—</span>'} ${add}</td>`; }).join('')}${ed ? `<td>${Object.keys(edits).length ? `<button class="btn" data-rreset="${ref}" style="padding:1px 8px" title="Undo your edits for this weekend">Reset</button>` : ''}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>`;
 }
@@ -348,6 +363,7 @@ function viewSchedule() {
     <button class="btn" id="pdf" ${downloads && window.jspdf ? '' : 'disabled'} title="${downloads ? '' : 'Downloads aren’t available in this view'}">Download PDF</button>
     ${adminView() ? `<button class="btn" id="regen" ${canEdit() ? '' : 'disabled'}>Regenerate around locks</button>
     <button class="btn primary" id="fresh" ${canEdit() ? '' : 'disabled'}>Generate fresh draft</button>` : ''}</div>
+  ${pdBanner(st)}
   ${!isScheduler() && adminView() ? `<div class="banner">${S.role === 'Program Director' ? 'PD' : 'Admin'} view. The schedulers and chiefs build this.${canSwap() ? ' You can approve like-for-like swaps: click a name.' : ''}${S.role === 'Chief' ? ' Enter your own call picks on the Inputs tab.' : ''}</div>` : ''}
   <div class="grid2">
     <div class="panel" style="padding:10px">
@@ -652,10 +668,16 @@ function viewRules() {
   ${rulesCatalogHTML()}`;
 }
 
+// every comment the PD has left on this month (send-backs and approvals), newest first
+function pdNotes(st) { return st.log.filter(l => { const x = pdNoteText(l); return x && x.note.trim(); }).slice().reverse(); }
+function pdNoteText(l) { const m = l.text.match(/(Sent back|PD approved; sent to schedulers to publish|Approved and published):\s*(.*)$/); return m ? { kind: m[1] === 'Sent back' ? 'Sent back' : 'Approved', note: m[2] } : null; }
+function pdNotesPanel(st) { const L = pdNotes(st).map(l => Object.assign({ at: l.at }, pdNoteText(l))).filter(x => x.note); if (!L.length) return '';
+  return `<div class="panel pdnotes"><h3>PD comments (${L.length})</h3><ul class="issues">${L.map((x, i) => `<li class="${x.kind === 'Sent back' ? 'soft' : 'ok'} small"><b>${x.kind}${i === 0 ? ' (latest)' : ''}:</b> “${esc(x.note)}” <span class="muted">· ${new Date(x.at).toLocaleString()}</span></li>`).join('')}</ul></div>`; }
+function pdBanner(st) { if (!(isScheduler() && st.status === 'Scheduler review')) return ''; const l = pdNotes(st).map(pdNoteText).find(x => x && x.kind === 'Sent back' && x.note); return l ? `<div class="banner pdbanner"><b>The PD sent this back:</b> “${esc(l.note)}” <a href="#approval">All PD comments</a></div>` : ''; }
 function viewApproval() {
   const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role, previewing = roleKey(S.role) !== S.realRole;
   let actions = '';
-  if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<button class="btn" id="saveVer">Save version</button><button class="btn primary" id="toPD">Send to the PD</button>`;
+  if ((r === 'Scheduler' || r === 'Chief') && ['Draft', 'Scheduler review'].includes(st.status) && st.A) actions = `<span class="small muted">Saved automatically. Every build and every step is kept below.</span><button class="btn primary" id="toPD">Send to the PD</button>`;
   if (r === 'Program Director' && st.status === 'PD review') actions = `<input type="text" id="pdNote" placeholder="Comment (optional)" style="min-width:220px"><button class="btn" id="sendBack">Send back with changes</button><button class="btn" id="approveHold">Approve, send to schedulers</button><button class="btn primary" id="approve">Approve and publish</button>`;
   if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Approved') actions = `<span class="small">The PD approved this. Publish when you're ready.</span><button class="btn" id="unapprove">Reopen for edits</button><button class="btn primary" id="publish">Publish</button>`;
   if ((r === 'Scheduler' || r === 'Chief') && st.status === 'Published') actions = `<button class="btn" id="revise">Start a revised version</button>`;
@@ -663,6 +685,7 @@ function viewApproval() {
   <div class="stepper">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s}</b><span class="small muted">${['Schedulers edit and rebuild', 'Schedulers check Stats', 'PD approves or sends back', 'PD approved; schedulers publish', 'Residents see it'][i]}</span></div>`).join('')}</div>
   ${previewing && adminView() ? `<div class="banner">Preview: these are the ${esc(roleName())}'s buttons, shown for reference. Only a real ${esc(roleName())} account can press them (the database checks). To test the PD steps, add a test account with the Program director role on People and sign in as it in a private window.</div>` : ''}
   ${!adminView() ? `<p class="small muted">Where this month's schedule is in the approval process. You'll see it on the Schedule tab once it's published.</p>` : `<div class="panel"><div class="row actions ${previewing ? 'preview' : ''}">${actions || `<span class="muted small">Nothing for the ${esc(roleName())} to do at this stage.</span>`}<span class="spacer"></span><button class="btn" id="copyTxt" ${st.A ? '' : 'disabled'}>Copy schedule as text</button></div></div>
+  ${adminView() ? pdNotesPanel(st) : ''}
   <div class="grid2"><div class="panel"><h3>Versions</h3>${st.versions.length ? `<div class="tablewrap"><table><thead><tr><th>Version</th><th>Saved</th><th>Status</th><th class="n">Changed days</th><th></th></tr></thead><tbody>${st.versions.slice().reverse().map(v => `<tr><td>v${v.n}</td><td>${new Date(v.at).toLocaleString()}</td><td>${esc(v.status)}</td><td class="n">${v.changed == null ? '—' : v.changed}</td><td>${canEdit() ? `<button class="btn" data-restore="${v.n}" style="padding:1px 8px">Restore</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No saved versions yet.</p>'}</div>
   <div class="panel"><h3>Activity</h3><ul class="issues">${st.log.slice(-14).reverse().map(l => `<li class="ok small"><b>${esc(l.role)}</b> ${esc(l.text)} <span class="muted">· ${new Date(l.at).toLocaleString()}</span></li>`).join('') || '<li class="ok small">No activity yet.</li>'}</ul></div></div>`}`;
 }
@@ -1023,7 +1046,7 @@ function wire() {
   const mt = $('#mineT'); if (mt) mt.onchange = () => { MINE = mt.checked; try { localStorage.setItem('gs-mine', MINE ? '1' : '0'); } catch (e) {} render(); };
   document.querySelectorAll('[data-jump]').forEach(el => el.onclick = e => { e.preventDefault(); const t = document.getElementById(el.dataset.jump); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   document.querySelectorAll('[data-rc]').forEach(el => el.onclick = () => showRuleCheck(el.dataset.rc));
-  document.querySelectorAll('[data-why]').forEach(el => el.onclick = e => { e.stopPropagation(); toast('⛔ ' + el.dataset.why); });
+  document.querySelectorAll('[data-why]').forEach(el => el.onclick = e => { if (e.target.closest('[data-rx]')) return; e.stopPropagation(); toast(el.dataset.why); });
   document.querySelectorAll('[data-rx]').forEach(el => el.onclick = () => { const [ref, b, i] = el.dataset.rx.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).slice(); list.splice(+i, 1); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-ra]').forEach(el => el.onchange = () => { if (!el.value) return; const [ref, b] = el.dataset.ra.split('|'); const list = (CUR.rb[+ref].blocks[b] || []).concat(el.value); setRnd(+ref, b, list); });
   document.querySelectorAll('[data-rreset]').forEach(el => el.onclick = () => { const st2 = cur(); delete st2.rndEdit[el.dataset.rreset]; logEvent(S.month, 'Reset rounding edits'); save(); render(); });
