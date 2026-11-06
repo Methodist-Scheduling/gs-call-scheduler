@@ -211,7 +211,8 @@ const RABBR = { 'Trauma/EGS': 'T/EGS', ICU: 'ICU', GS1: 'GS1', GS2: 'GS2', 'Vasc
 // Same rule as the PDF: rounding prints on Sat, Sun and holiday cells.
 const RBC = {};
 function rbFor(k) {
-  try { const st = S.M[k], A = st && st.A ? st.A : DATA.history[k] ? B.actualAssign(DATA, k) : null; if (!A) return null;
+  if (DATA.history[k] && !(S.M[k] && S.M[k].A)) { const rb = {}; DATA.history[k].forEach(x => { if (x.round && Object.values(x.round).some(v => v && v.length)) rb[x.d] = { blocks: x.round, holiday: (B.HOLIDAYS[k] || []).includes(x.d) }; }); return rb; } // as published
+  try { const st = S.M[k], A = st && st.A ? st.A : null; if (!A) return null;
     const sig = JSON.stringify(A) + JSON.stringify(st && st.rndEdit || {}) + (st && st.rnd ? JSON.stringify(st.rnd) : '');
     if (RBC[k] && RBC[k].sig === sig) return RBC[k].rb;
     const [y, m] = ym(k), P = E.prepare(st ? buildInput(k) : B.buildInput(dataWithDrafts(k), y, m, 'draft'));
@@ -485,7 +486,7 @@ let PUBH = null; // published_history rows (every published version, newest edit
 async function loadPubHist() { try { const { data } = await sb.from('published_history').select('month_key,version,schedule,rnd,published_at').order('month_key').order('version'); PUBH = data || []; } catch (e) { PUBH = []; } if (location.hash.slice(1) === 'history') render(); }
 function viewHistory() {
   if (PUBH === null) { PUBH = []; loadPubHist(); }
-  const pubMonths = [...new Set(PUBH.map(r => r.month_key))].filter(h => !DATA.history[h]);
+  const pubMonths = [...new Set(PUBH.map(r => r.month_key))].filter(h => !DATA.history[h] && h < S.month); // the month being worked on isn't history yet
   const allMonths = Object.keys(DATA.history).filter(h => h >= '2026-07').sort().concat(pubMonths.sort());
   if (!allMonths.includes(S.histMonth)) S.histMonth = allMonths.at(-1);
   const k = S.histMonth, [y, m] = ym(k), hol = B.HOLIDAYS[k] || [];
@@ -493,9 +494,15 @@ function viewHistory() {
   if (DATA.history[k]) { // schedules from before the app
     const hist = DATA.history[k], bt = BT[m];
     const tags = d => { const x = hist[d - 1]; const t = []; if (hol.includes(d)) t.push('Holiday'); if (x && x.vac.length) t.push('Vac: ' + x.vac.join(', ')); return t.join(' · '); };
-    return `${btns}<div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="muted small">Published schedule (before the app)</span></div>
+    const MS = [7, 8, 9, 10, 11].filter(i => BT[i]), hardN = x => Object.values(x.hard).reduce((a, b) => a + b, 0);
+    const row = (label, f) => `<tr><td>${label}</td>${MS.map(i => { const a = f(BT[i].actual), e = f(BT[i].engine); return `<td class="n">${a}</td><td class="n" style="font-weight:700;color:${e < a ? 'var(--good)' : e > a ? 'var(--crit)' : 'inherit'}">${e}</td>`; }).join('')}</tr>`;
+    const cmp = adminView() && MS.length ? `<div class="panel"><h3>Published schedules vs what the engine would have made</h3>
+      <p class="small muted">Each month rebuilt with what the schedulers knew then (that month's vacations, plus PGY-5, fellow and holiday dates locked as they happened), both scored against the v1.3 rules. Lower is better: <b style="color:var(--good)">green</b> = engine did better, <b style="color:var(--crit)">red</b> = engine did worse.</p>
+      <div class="tablewrap"><table><thead><tr><th></th>${MS.map(i => `<th class="n">${MONTHS[i - 1]} actual</th><th class="n">${MONTHS[i - 1]} engine</th>`).join('')}</tr></thead><tbody>
+      ${row('Hard-rule breaks', hardN)}${row('Every-other-day calls', x => x.q2)}${row('Vacation bookends broken', x => x.bookendsBroken)}${row('Residents outside target', x => x.outTarget)}${row('Two-person days', x => x.two)}</tbody></table></div>
+      <p class="small muted">Many "breaks" in the real schedules are rules that were only written down this month (H15 sister services; H2, no PGY-4 in the mid slot), so they weren't mistakes at the time. The engine uses more two-person days for the same reason.</p></div>` : '';
+    return `${btns}${cmp}<div class="panel" style="padding:10px"><div class="row" style="padding:4px 6px 10px"><h3>${MONTHS_LONG[m - 1]} ${y}</h3><span class="muted small">Published schedule (before the app)</span></div>
     ${calendarHTML(B.actualAssign(DATA, k), k, { click: false, tags, rb: rbFor(k) })}
-    <p class="small muted" style="margin:8px 6px 0">Weekend rounding for months before the app is rebuilt from the call schedule with today's rules, so it may not match who actually rounded.</p>
     ${adminView() && bt && bt.actualIssues.length ? `<details style="margin-top:10px"><summary class="small">Rule breaks in the published ${MONTHS_LONG[m - 1]} schedule (${bt.actualIssues.length})</summary><ul class="issues">${bt.actualIssues.map(i => `<li class="hard">${esc(i)}</li>`).join('')}</ul></details>` : ''}</div>`;
   }
   // published from the app: every version, newest first by default; changed cells marked vs the version before
