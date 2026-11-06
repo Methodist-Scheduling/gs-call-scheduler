@@ -78,6 +78,7 @@ window.RULES_CATALOG = {
       rules: [
         { id: 'A1', title: 'Steps', plain: 'Draft → Scheduler review → PD review → Approved → Published. The PD approves and publishes, approves and hands it back for the schedulers to publish, or sends it back with comments.', computer: 'Each move is checked by role in the database and logged with who and when.' },
         { id: 'A2', title: 'What residents see', plain: 'Residents only ever see published schedules (current and past). They\'re alerted at sign-in when a new month is out or when their own calls or rounding change.', computer: 'Residents read published copies only; drafts are admin-only.' },
+        { id: 'SW0', title: 'How residents trade', plain: 'On a published schedule, a resident clicks their own call and picks a trade. The other resident agrees or declines; if they agree, a scheduler or chief approves or denies. Everyone involved is told at their next sign-in. Trades only for now (no giving a call away).', computer: 'Swaps live in their own table; residents only see swaps they are part of. Approval re-checks every rule with full data and cancels the swap if either call changed.' },
         { id: 'SW1', title: 'Like for like', plain: 'Swaps trade weekday for weekday, Friday for Friday, weekend for weekend.', computer: 'Only same-type days are offered.' },
         { id: 'SW2', title: 'Checked first', plain: 'A swap is only offered if it keeps every hard rule.', computer: 'Each candidate swap is scored before it\'s listed.' },
         { id: 'SW3', title: 'Who approves', plain: 'A scheduler or PGY-5 chief approves swaps. The PD isn\'t involved. Swaps count toward year-to-date totals.', computer: 'Swaps on a published month create a revised version and alert the residents involved.' }
@@ -99,6 +100,7 @@ window.RULES_CATALOG = {
     { title: 'After publishing', steps: [
       'Residents see it right away and get an alert at their next sign-in.',
       'Swaps: click a name on the Schedule, pick a like-for-like swap. It becomes a revised version and the people involved are alerted.',
+      'Residents can request trades themselves: they show up on Requests under Swaps once the other resident agrees. Approve or deny with a reason.',
       'Bigger changes: Approval → Start a revised version, edit, and send to the PD again.'
     ] },
     { title: 'People and roster', steps: [

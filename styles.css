@@ -161,3 +161,5 @@ li.rule .rid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font
 .row.actions > .btn { margin: 0; white-space: nowrap; }
 .row.actions.preview .btn:not(#copyTxt) { opacity: .45; pointer-events: none; }
 #toast { cursor: pointer; }
+
+.badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--crit); color: #fff; font-size: 11px; line-height: 18px; text-align: center; margin-left: 4px; }

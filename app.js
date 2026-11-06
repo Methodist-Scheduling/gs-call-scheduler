@@ -20,7 +20,7 @@ const S = {
   rules: { pgy4MidSlot: false, sameServiceBlocked: false, noTwoPerson: [], fellowCap: 4, maxQ2Run: 3, callHours: 24, targets: { 1: [5, 6], 2: [5, 6], 3: [5, 6], 4: [6, 7], 5: [6, 6], F: [4, 4] } },
   trioSwap: { xmas: false, ny: false },
   people: {}, // leave dates by name (stored in the database, not here)
-  M: {}, requests: [], notes: {}
+  M: {}, requests: [], notes: {}, swaps: [], acct: {}
 };
 function blankMonth(k) {
   const inputs = {};
@@ -153,6 +153,7 @@ function connect() {
   sb.channel('board').on('postgres_changes', { event: '*', schema: 'public', table: 'months' }, p => { if (pendingOwn || !p.new) return; applyingRemote = true; adoptMonth(p.new); applyingRemote = false; render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => { if (pendingOwn || !p.new) return; adoptSettings(p.new); render(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => { loadRequests().then(render); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'swaps' }, () => { loadSwaps().then(render); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'published' }, () => { if (!S.isAdmin) loadPublished().then(pub => { render(); publishAlerts(pub); }); }).subscribe();
 }
 (CTX.months || []).forEach(adoptMonth);
@@ -170,7 +171,8 @@ const cons = k => S.requests.filter(r => r.month_key === k && r.status === 'acce
 const canDecide = () => isScheduler() || S.role === 'Program Director';
 const whoName = id => (S.names && S.names[id]) || 'someone';
 const whenTxt = t => t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-async function loadNames() { const { data } = await sb.from('profiles').select('id,display_name'); S.names = Object.fromEntries((data || []).map(p => [p.id, p.display_name])); }
+async function loadNames() { const { data } = await sb.from('profiles').select('id,display_name,roster_name,active'); S.names = Object.fromEntries((data || []).map(p => [p.id, p.display_name])); S.acct = Object.fromEntries((data || []).filter(p => p.roster_name && p.active).map(p => [p.roster_name, p.id])); }
+async function loadSwaps() { const { data } = await sb.from('swaps').select('*').order('created_at'); S.swaps = data || []; }
 async function loadRequests() { const { data, error } = await sb.from('requests').select('*').order('created_at'); if (!error) S.requests = data || []; }
 async function loadNotes() { if (!adminView() && !S.isAdmin) return; const { data } = await sb.from('month_notes').select('*'); (data || []).forEach(r => S.notes[r.key] = r.notes_text); }
 let notesTimer = null;
@@ -211,7 +213,7 @@ function calendarHTML(A, k, o) {
       const n = a[s], key = d + s, est = o.est && o.est[key], lk = o.locked ? o.locked(d, s, n) : '';
       if (!n) return `<button class="chip empty" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'}>${s === 'M' ? 'two-person call' : 'no ' + SLOTNAME[s].toLowerCase()}</button>`;
       const fl = o.flags && o.flags[d + '|' + s];
-      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
+      return `<button class="chip ${s} ${est ? 'est' : ''} ${fl ? 'bad' : ''}" data-d="${d}" data-s="${s}" ${o.click || (o.own && n === o.own) ? '' : 'disabled'} title="${esc(n)} · ${LEVEL(n)}${est ? ' · ' + esc(est) : ''}${fl ? ' · breaks a rule: ' + esc(fl) : ''}">${fl ? '⛔ ' : ''}${est ? '⚠ ' : ''}${esc(n)}${lk ? `<span class="lk">${lk}</span>` : ''}</button>`;
     }).join('');
     const rl = o.rb ? roundLines(o.rb, k, d) : null;
     const rnd = rl ? `<div class="rnd" title="Weekend/holiday rounding">${rl.map(t => `<div>${esc(t)}</div>`).join('')}</div>` : '';
@@ -289,7 +291,7 @@ function viewSchedule() {
   <div class="grid2">
     <div class="panel" style="padding:10px">
       <div class="legend" style="padding:4px 6px 10px"><span><i style="background:var(--lv-u)"></i>Upper (PGY-4/5, fellow)</span><span><i style="background:var(--lv-m)"></i>Mid (PGY-2/3)</span><span><i style="background:var(--lv-i)"></i>Intern</span><span>Shaded = Fri–Sun</span><span>⚠ = depends on an unconfirmed date</span><span>"proposed" = PGY-5/fellow date the app picked</span><span>Small print on Sat/Sun/holidays = rounding (V/T = Vasc/Thor, * = cross-cover)</span></div>
-      ${calendarHTML(st.A, k, { click: adminView() && (canEdit() || canSwap()), locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
+      ${calendarHTML(st.A, k, { click: adminView() && (canEdit() || canSwap()), own: !adminView() && st.status === 'Published' ? MY_NAME : null, locked, est, rb, flags: adminView() ? st.flags : null, tags: d => (HOLNAMES[k] || {})[d] || '' })}
       <h3 style="margin:16px 6px 6px">Weekend and holiday rounding</h3>
       <p class="small muted" style="margin:0 6px 8px">${canEdit() ? 'The app fills these in (W1–W6). Click ✕ to take someone off a team or “+” to add someone. Your edits stay through rebuilds; red means the edit breaks a rule. ' : ''}* = cross-cover. Shown on Sat, Sun and holiday cells above and in the PDF.</p>
       ${roundingTable(recs, recLabel, BL, k)}
@@ -441,7 +443,8 @@ function viewNotes() {
   <div class="panel"><h3>Incoming requests for ${mn} (${pend.length})</h3>${otherPend ? `<p class="small muted">${otherPend} more pending for other months. Switch the month at the top to see them.</p>` : ''}
     ${pend.length ? `<ul class="issues">${pend.map(r => `<li class="soft"><b>${esc(r.resident)}</b>: ${esc(describe({ type: r.type, name: '', days: r.days, reason: r.note }).trim())}${isLate(r) ? ' <span class="pill warn">late</span>' : ''} <span class="muted small">· sent ${new Date(r.created_at).toLocaleDateString()}</span>
       <div class="row" style="margin-top:6px;gap:6px">${canDecide() ? `<button class="btn primary" data-qacc="${r.id}" style="padding:1px 10px">Accept</button><button class="btn" data-qden="${r.id}" style="padding:1px 10px">Deny</button><input type="text" data-qwhy="${r.id}" placeholder="Reason if denying (they'll see it)" style="min-width:220px;flex:1">` : '<span class="small muted">A scheduler or chief decides.</span>'}</div></li>`).join('')}</ul>` : '<p class="small muted">No pending requests.</p>'}</div>
-  <div class="grid2"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
+  ${adminSwapsHTML(k)}
+  <div class="grid2" style="margin-top:14px"><div class="panel"><label for="notes" class="small muted">Texted requests (paste them here; only admins can see this box)</label>
     <textarea id="notes">${esc(S.notes[k] || '')}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="interpret" ${sample ? '' : 'disabled'}>Interpret with Claude</button><span class="small muted">${sample ? 'Each note becomes a proposed rule below. Nothing changes until a scheduler accepts it.' : 'Claude isn’t connected.'}</span></div>
     <div style="margin-top:12px">${proposalsHTML()}</div></div>
@@ -471,7 +474,8 @@ function viewRequests() {
     <label for="qNote">Note</label><input id="qNote" type="text" placeholder="optional, e.g. wedding"></div>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="qSend">Send request</button></div>
     ${sample ? `<hr style="margin:14px 0;border:0;border-top:1px solid var(--line)"><label for="qText" class="small muted">Or describe it and Claude fills in the form</label><textarea id="qText" rows="2" placeholder="e.g. I need the weekend of the 12th off for a wedding"></textarea><div class="row" style="margin-top:8px"><button class="btn" id="qClaude">Fill in with Claude</button></div>` : ''}</div>
-  <div class="panel"><h3>My requests</h3>${mine.length ? `<ul class="issues">${mine.map(r => `<li class="${r.status === 'denied' ? 'hard' : r.status === 'accepted' ? 'ok' : 'soft'}">${STATUS_PILL[r.status]} <b>${esc(monthName(r.month_key))}</b>: ${esc((RTYPES.find(t => t[0] === r.type) || [, r.type])[1])}, ${esc(r.days.join(', '))}${r.note ? ' · ' + esc(r.note) : ''}${isLate(r) ? ' <span class="pill warn">late</span>' : ''}${r.status === 'denied' && r.reason ? `<div class="small">Why: ${esc(r.reason)}</div>` : ''}${r.status === 'pending' ? ` <button class="btn" data-qwd="${r.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No requests yet.</p>'}</div></div>`;
+  <div class="panel"><h3>My requests</h3>${mine.length ? `<ul class="issues">${mine.map(r => `<li class="${r.status === 'denied' ? 'hard' : r.status === 'accepted' ? 'ok' : 'soft'}">${STATUS_PILL[r.status]} <b>${esc(monthName(r.month_key))}</b>: ${esc((RTYPES.find(t => t[0] === r.type) || [, r.type])[1])}, ${esc(r.days.join(', '))}${r.note ? ' · ' + esc(r.note) : ''}${isLate(r) ? ' <span class="pill warn">late</span>' : ''}${r.status === 'denied' && r.reason ? `<div class="small">Why: ${esc(r.reason)}</div>` : ''}${r.status === 'pending' ? ` <button class="btn" data-qwd="${r.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No requests yet.</p>'}</div></div>
+  ${residentSwapsHTML()}`;
 }
 
 function describe(c) { const mo = MONTHS[ym(S.month)[1] - 1]; const days = c.days.map(d => mo + ' ' + d).join(', '); const t = { off: 'off (best effort, S6)', want: 'wants call (best effort)', block: 'unavailable (firm)', protected: 'protected: not post-call (S2)', colorectal: 'big colorectal day: GS2 resident not post-call (S3)' }[c.type]; return `${c.type === 'colorectal' ? 'GS2' : c.name}: ${days} ${t}${c.reason ? ' — ' + c.reason : ''}`; }
@@ -568,6 +572,69 @@ async function downloadPDF() {
 }
 
 // ---------- drawer ----------
+// ---------- resident-to-resident trades (published months only) ----------
+const SW_STATUS = { pending: 'waiting on them', agreed: 'agreed; waiting on schedulers', declined: 'declined', approved: 'approved', denied: 'denied by schedulers', withdrawn: 'withdrawn', cancelled: 'cancelled (schedule changed)' };
+const openSwap = (k, d, s, n) => S.swaps.some(x => x.month_key === k && x.slot === s && ['pending', 'agreed'].includes(x.status) && ((x.day_a === d && x.requester === n) || (x.day_b === d && x.target === n)));
+function swapOptions(k, d, s) {
+  const st = S.M[k], me_ = st.A[d - 1][s], type = dayType(k, d), P = E.prepare(buildInput(k)), base = E.evaluate(P, st.A).hard, out = [];
+  st.A.forEach((b, i) => { const d2 = i + 1, other = b[s]; if (d2 === d || !other || other === me_ || isHolidayLock(k, d2) || dayType(k, d2) !== type) return;
+    if (!S.acct[other] || openSwap(k, d2, s, other)) return;
+    const trial = st.A.map(x => Object.assign({}, x)); trial[d - 1][s] = other; trial[i][s] = me_;
+    if (E.evaluate(P, trial).hard <= base) out.push({ d2, other }); });
+  return out;
+}
+function openSwapAsk(d, s) {
+  const k = S.month, st = cur(), n = st.A[d - 1][s];
+  const busy = openSwap(k, d, s, n), opts = busy ? [] : swapOptions(k, d, s);
+  $('#drawer').innerHTML = `<div class="row"><h3>Swap ${dateLabel(k, d)}</h3><span class="spacer"></span><button class="btn" id="dClose">Close</button></div>
+    <p class="small muted">Trades only, like for like (${dayType(k, d)} for ${dayType(k, d)}). Only trades that keep every hard rule are listed. The other resident agrees, then a scheduler or chief approves.</p>
+    ${busy ? '<p class="small">This call already has an open swap. See Requests.</p>' : opts.length ? `<label class="small" for="swNote">Note (optional)</label><input id="swNote" type="text" placeholder="e.g. family wedding" style="width:100%;margin-bottom:8px">
+      <div style="display:grid;gap:6px">${opts.map(o => `<button class="opt" data-ask="${o.d2}"><span>You take <b>${dateLabel(k, o.d2)}</b> · ${esc(o.other)} takes yours</span><span class="why">ask ${esc(o.other)}</span></button>`).join('')}</div>`
+      : '<p class="small">No trade fits the rules for this call (or the other residents don’t have accounts yet).</p>'}`;
+  $('#drawer').classList.add('open'); $('#dClose').onclick = () => $('#drawer').classList.remove('open');
+  $('#drawer').querySelectorAll('[data-ask]').forEach(b => b.onclick = async () => { const d2 = +b.dataset.ask, other = st.A[d2 - 1][s];
+    const { error } = await sb.from('swaps').insert({ month_key: k, slot: s, day_a: d, day_b: d2, requester: n, target: other, requester_id: me.id, note: ($('#swNote').value || '').trim() });
+    if (error) return toast('Not sent: ' + error.message);
+    await loadSwaps(); $('#drawer').classList.remove('open'); render(); toast(`Sent. ${other} will see it next time they sign in; track it on Requests.`); });
+}
+function swapLine(x) { const k = x.month_key; return `${esc(x.requester)} ${dateLabel(k, x.day_a)} ⇄ ${esc(x.target)} ${dateLabel(k, x.day_b)} <span class="muted small">(${SLOTNAME[x.slot].toLowerCase()})</span>`; }
+function residentSwapsHTML() {
+  const mine = S.swaps.filter(x => x.requester_id === me.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const forMe = S.swaps.filter(x => x.target_id === me.id && x.status === 'pending');
+  return `<div class="panel" style="margin-top:14px"><h3>Swaps</h3><p class="small muted">To ask for a trade, click one of your calls on a published Schedule.</p>
+    ${forMe.length ? `<h4 style="margin:10px 0 4px">Asked of you</h4><ul class="issues">${forMe.map(x => `<li class="soft">${swapLine(x)}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swyes="${x.id}" style="padding:1px 10px">Agree</button><button class="btn" data-swno="${x.id}" style="padding:1px 10px">Decline</button><input type="text" data-swwhy="${x.id}" placeholder="Reason (optional)" style="flex:1;min-width:160px"></div></li>`).join('')}</ul>` : ''}
+    <h4 style="margin:10px 0 4px">Yours</h4>${mine.length ? `<ul class="issues">${mine.map(x => `<li class="${['declined', 'denied', 'cancelled'].includes(x.status) ? 'hard' : x.status === 'approved' ? 'ok' : 'soft'}">${swapLine(x)} · <b>${esc(SW_STATUS[x.status])}</b>${x.target_reason ? ` · ${esc(x.target)}: “${esc(x.target_reason)}”` : ''}${x.admin_reason ? ` · schedulers: “${esc(x.admin_reason)}”` : ''}${['pending', 'agreed'].includes(x.status) ? ` <button class="btn" data-swwd="${x.id}" style="float:right;padding:1px 8px">Withdraw</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">None yet.</p>'}</div>`;
+}
+function adminSwapsHTML(k) {
+  const agreed = S.swaps.filter(x => x.status === 'agreed'), waiting = S.swaps.filter(x => x.status === 'pending'), done = S.swaps.filter(x => ['approved', 'denied'].includes(x.status)).slice(-8).reverse();
+  const check = x => { const st = S.M[x.month_key]; if (!st || !st.A) return 'month not loaded'; const A = st.A; if (A[x.day_a - 1][x.slot] !== x.requester || A[x.day_b - 1][x.slot] !== x.target) return 'schedule changed since they asked';
+    const P = E.prepare(buildInput(x.month_key)), base = E.evaluate(P, A), trial = A.map(y => Object.assign({}, y)); trial[x.day_a - 1][x.slot] = x.target; trial[x.day_b - 1][x.slot] = x.requester; const ev = E.evaluate(P, trial);
+    if (ev.hard > base.hard) { const before = new Set(base.issues.map(i => i.msg)); const nw = ev.issues.find(i => i.sev === 'hard' && !before.has(i.msg)); return nw ? nw.msg : 'breaks a hard rule'; } return ''; };
+  return `<div class="panel" style="margin-top:14px"><h3>Swaps (${agreed.length} to approve)</h3><p class="small muted">Both residents agreed. Approving updates the published schedule right away; the PD isn't involved (SW3).</p>
+    ${agreed.length ? `<ul class="issues">${agreed.map(x => { const p = check(x); return `<li class="${p ? 'hard' : 'soft'}">${swapLine(x)} · ${esc(monthName(x.month_key))}${x.note ? ` · “${esc(x.note)}”` : ''}<div class="small">${p ? '⛔ ' + esc(p) : '✅ Keeps every hard rule'}</div>
+      ${isScheduler() ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn primary" data-swok="${x.id}" ${p ? 'disabled' : ''} style="padding:1px 10px">Approve</button><button class="btn" data-swden="${x.id}" style="padding:1px 10px">Deny</button><input type="text" data-swdwhy="${x.id}" placeholder="Reason (they'll see it)" style="flex:1;min-width:180px"></div>` : ''}</li>`; }).join('')}</ul>` : '<p class="small muted">Nothing waiting.</p>'}
+    ${waiting.length ? `<details><summary class="small">Waiting on the other resident (${waiting.length})</summary><ul class="issues">${waiting.map(x => `<li class="small">${swapLine(x)}</li>`).join('')}</ul></details>` : ''}
+    ${done.length ? `<details><summary class="small">Recent decisions</summary><ul class="issues">${done.map(x => `<li class="small">${swapLine(x)} · ${esc(x.status)} by ${esc(whoName(x.decided_by))} · ${esc(whenTxt(x.decided_at))}${x.admin_reason ? ' · “' + esc(x.admin_reason) + '”' : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
+async function approveSwap(id) {
+  const x = S.swaps.find(y => y.id === id), k = x.month_key, st = S.M[k];
+  if (st.A[x.day_a - 1][x.slot] !== x.requester || st.A[x.day_b - 1][x.slot] !== x.target) { await sb.from('swaps').update({ status: 'cancelled', decided_by: me.id, decided_at: new Date().toISOString(), admin_reason: 'The schedule changed before approval.' }).eq('id', id); await loadSwaps(); return render(); }
+  st.A[x.day_a - 1][x.slot] = x.target; st.A[x.day_b - 1][x.slot] = x.requester; st.locks[x.day_a + '|' + x.slot] = x.target; st.locks[x.day_b + '|' + x.slot] = x.requester;
+  logEvent(k, `Swap approved: ${x.requester} ${dateLabel(k, x.day_a)} ⇄ ${x.target} ${dateLabel(k, x.day_b)} (asked by ${x.requester}, agreed by ${x.target})`);
+  if (st.status === 'Published') saveVersion('Revised (swap)'); save(k);
+  await sb.from('swaps').update({ status: 'approved', decided_by: me.id, decided_at: new Date().toISOString() }).eq('id', id); await loadSwaps(); render(); toast('Swap approved. Both residents will see it at their next sign-in.');
+}
+function swapNotices() { // shown at sign-in to residents
+  const out = [];
+  S.swaps.filter(x => x.target_id === me.id && x.status === 'pending').forEach(x => out.push(`🔁 ${x.requester} asked to swap: you'd take ${dateLabel(x.month_key, x.day_a)}, they'd take your ${dateLabel(x.month_key, x.day_b)}. Answer on Requests.`));
+  S.swaps.filter(x => x.requester_id === me.id && !x.requester_seen && ['declined', 'denied', 'approved', 'cancelled'].includes(x.status)).forEach(x => out.push(
+    x.status === 'declined' ? `❌ ${x.target} declined your swap (${dateLabel(x.month_key, x.day_a)} ⇄ ${dateLabel(x.month_key, x.day_b)})${x.target_reason ? ': “' + x.target_reason + '”' : ''}.`
+    : x.status === 'denied' ? `❌ The schedulers denied your swap with ${x.target} (${dateLabel(x.month_key, x.day_a)} ⇄ ${dateLabel(x.month_key, x.day_b)})${x.admin_reason ? ': “' + x.admin_reason + '”' : ''}.`
+    : x.status === 'approved' ? `✅ Your swap with ${x.target} is approved: you now have ${dateLabel(x.month_key, x.day_b)} instead of ${dateLabel(x.month_key, x.day_a)}.`
+    : `Your swap with ${x.target} was cancelled because the schedule changed.`));
+  return out;
+}
+async function markSwapsSeen() { const ids = S.swaps.filter(x => x.requester_id === me.id && !x.requester_seen && ['declined', 'denied', 'approved', 'cancelled'].includes(x.status)).map(x => x.id); for (const id of ids) await sb.from('swaps').update({ requester_seen: true }).eq('id', id); }
 function openDrawer(d, s) {
   const k = S.month, st = cur(); const { P } = CUR; const a = st.A[d - 1]; const curN = a[s];
   const hol = isHolidayLock(k, d); const used = [a.U, a.M, a.I].filter(Boolean);
@@ -711,10 +778,11 @@ function highlightMe(root) {
   root.querySelectorAll('mark.me').forEach(m => { const c = m.closest('.chip'); if (c) c.classList.add('has-me'); });
 }
 const ADMIN_TABS = ['inputs', 'dashboard', 'rules', 'people'];
-const TAB_ORDER = { default: ['schedule', 'notes', 'inputs', 'dashboard', 'history', 'rules', 'approval', 'people'], 'Program Director': ['schedule', 'approval', 'inputs', 'dashboard', 'notes', 'history', 'rules', 'people'] };
+const TAB_ORDER = { default: ['schedule', 'notes', 'approval', 'inputs', 'dashboard', 'history', 'rules', 'people'], 'Program Director': ['schedule', 'approval', 'inputs', 'dashboard', 'notes', 'history', 'rules', 'people'] };
 function orderTabs() { const nav = document.querySelector('nav.tabs'); if (!nav) return; (TAB_ORDER[S.role] || TAB_ORDER.default).forEach(t => { const el = nav.querySelector(`a[href="#${t}"]`); if (el) nav.appendChild(el); }); }
 function render() {
   let r = route(); orderTabs();
+  { const nb = S.swaps.filter(x => (x.target_id === me.id && x.status === 'pending') || (adminView() && x.status === 'agreed')).length + (adminView() ? S.requests.filter(q => q.status === 'pending').length : 0); const t = document.querySelector('nav.tabs a[href="#notes"]'); if (t) t.innerHTML = 'Requests' + (nb ? ` <span class="badge">${nb}</span>` : ''); }
   if (ADMIN_TABS.includes(r) && !adminView()) { r = 'schedule'; history.replaceState(null, '', '#schedule'); }
   document.querySelectorAll('nav.tabs a').forEach(a => { const t = a.getAttribute('href').slice(1); if (ADMIN_TABS.includes(t)) a.hidden = !adminView(); });
   const pv = $('#previewNote'); if (pv) pv.hidden = !(S.isAdmin && roleKey(S.role) !== S.realRole);
@@ -736,7 +804,7 @@ function wire() {
   on('#fresh', () => generate(false)); on('#regen', () => generate(true)); on('#pdf', downloadPDF);
   on('#swapX', () => { S.trioSwap.xmas = !S.trioSwap.xmas; logEvent(k, 'Swapped which Christmas trio starts'); generate(true); });
   on('#swapN', () => { S.trioSwap.ny = !S.trioSwap.ny; logEvent(k, 'Swapped which New Year trio starts (January follows)'); generate(true); });
-  document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => openDrawer(+b.dataset.d, b.dataset.s));
+  document.querySelectorAll('.cal .chip:not([disabled])').forEach(b => b.onclick = () => adminView() ? openDrawer(+b.dataset.d, b.dataset.s) : openSwapAsk(+b.dataset.d, b.dataset.s));
   document.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { S.histMonth = b.dataset.hm; render(); });
   document.querySelectorAll('[data-hv]').forEach(b => b.onclick = () => { S.histView = b.dataset.hv; render(); });
   document.querySelectorAll('[data-in]').forEach(i => i.onchange = () => { st.inputs[i.dataset.n][i.dataset.in] = i.value.trim(); logEvent(k, `Input: ${i.dataset.n} ${i.dataset.in} = ${i.value.trim() || '(none)'}`); save(); });
@@ -746,6 +814,12 @@ function wire() {
   const notes = $('#notes'); if (notes) notes.oninput = () => { S.notes[k] = notes.value; saveNotes(k); };
   document.querySelectorAll('[data-qacc]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qacc); await setRequest(r.id, { status: 'accepted', decided_by: me.id, decided_at: new Date().toISOString(), reason: '' }); logEvent(k, `Accepted ${r.resident}'s request`); render(); askRebuild(r.month_key); });
   document.querySelectorAll('[data-qden]').forEach(b => b.onclick = async () => { const r = S.requests.find(x => x.id === +b.dataset.qden); const why = (document.querySelector(`[data-qwhy="${r.id}"]`) || {}).value || ''; await setRequest(r.id, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), reason: why.trim() }); logEvent(k, `Denied ${r.resident}'s request`); render(); });
+  const swUpd = async (id, patch, msg) => { const { error } = await sb.from('swaps').update(patch).eq('id', id); if (error) return toast('Not saved: ' + error.message); await loadSwaps(); render(); if (msg) toast(msg); };
+  document.querySelectorAll('[data-swyes]').forEach(b => b.onclick = () => swUpd(+b.dataset.swyes, { status: 'agreed', target_reason: '' }, 'Agreed. It goes to the schedulers to approve.'));
+  document.querySelectorAll('[data-swno]').forEach(b => b.onclick = () => swUpd(+b.dataset.swno, { status: 'declined', target_reason: ((document.querySelector(`[data-swwhy="${b.dataset.swno}"]`) || {}).value || '').trim() }, 'Declined. They’ll be told next time they sign in.'));
+  document.querySelectorAll('[data-swwd]').forEach(b => b.onclick = () => swUpd(+b.dataset.swwd, { status: 'withdrawn' }, 'Withdrawn.'));
+  document.querySelectorAll('[data-swok]').forEach(b => b.onclick = () => approveSwap(+b.dataset.swok));
+  document.querySelectorAll('[data-swden]').forEach(b => b.onclick = () => swUpd(+b.dataset.swden, { status: 'denied', decided_by: me.id, decided_at: new Date().toISOString(), admin_reason: ((document.querySelector(`[data-swdwhy="${b.dataset.swden}"]`) || {}).value || '').trim() }, 'Denied. The requester will be told.'));
   document.querySelectorAll('[data-qwd]').forEach(b => b.onclick = async () => { await dropRequest(+b.dataset.qwd); render(); });
   on('#qSend', async () => { const mk = $('#qMonth').value, days = parseDays($('#qDays').value, ndays(mk)); if (!days.length) return toast('Add the day numbers, e.g. 11-13.');
     const r = await addRequest({ month_key: mk, resident: CTX.profile.roster_name || MY_NAME, type: $('#qType').value, days, note: $('#qNote').value.trim(), status: 'pending', source: 'resident', created_by: me.id });
@@ -801,7 +875,7 @@ function myBits(schedule, rnd, k) { const n = MY_NAME, out = new Set(); if (!n) 
   (rnd || []).forEach(x => Object.entries(x.blocks || {}).forEach(([b, v]) => { if (v.some(m => m.replace(' (cross-cover)', '') === n)) out.add(`${b} rounding ${MONTHS[ym(k)[1] - 1]} ${x.days.filter(d => !x.weekend || E.dow(...ym(k), d) !== 5).join('–')}`); }));
   return out; }
 async function publishAlerts(pub) {
-  if (S.isAdmin || !pub.length) return;
+  if (S.isAdmin) return;
   const { data: seen } = await sb.from('seen_versions').select('*'); const sv = Object.fromEntries((seen || []).map(r => [r.month_key, r.version]));
   const msgs = [];
   for (const r of pub) { const k = r.month_key, was = sv[k]; if (was === r.version) continue;
@@ -809,13 +883,15 @@ async function publishAlerts(pub) {
     else { const { data: old } = await sb.from('published_history').select('schedule,rnd').eq('month_key', k).eq('version', was).maybeSingle();
       const before = myBits(old && old.schedule, old && old.rnd, k), after = myBits(r.schedule, r.rnd, k);
       const added = [...after].filter(x => !before.has(x)), removed = [...before].filter(x => !after.has(x));
-      if (added.length || removed.length) msgs.push(`✏️ Your ${monthName(k)} schedule changed.${added.length ? ' Added: ' + added.join(', ') + '.' : ''}${removed.length ? ' Removed: ' + removed.join(', ') + '.' : ''}`); }
+      if (added.length || removed.length) msgs.push(`✏️ Your ${monthName(k)} schedule changed.${added.length ? ' Added: ' + added.join(', ') + '.' : ''}${removed.length ? ' Removed: ' + removed.join(', ') + '.' : ''}`);
+      else msgs.push(`The ${monthName(k)} schedule changed since you last signed in.`); }
     await sb.from('seen_versions').upsert({ user_id: me.id, month_key: k, version: r.version, seen_at: new Date().toISOString() }); }
+  msgs.push(...swapNotices()); markSwapsSeen();
   if (msgs.length) modal(`<h3 style="margin-top:0">Since you last signed in</h3><ul class="issues">${msgs.map(m => `<li class="ok">${esc(m)}</li>`).join('')}</ul><button class="btn primary" data-close>Got it</button>`);
 }
 if (!S.isAdmin) { KEYS.forEach(k => { S.M[k].A = null; }); }
 render();
-Promise.all([loadRequests(), loadNotes(), loadNames(), S.isAdmin ? Promise.resolve(null) : loadPublished()]).then(([, , , pub]) => { render(); if (pub) publishAlerts(pub); });
+Promise.all([loadRequests(), loadNotes(), loadNames(), loadSwaps(), S.isAdmin ? Promise.resolve(null) : loadPublished()]).then(([, , , , pub]) => { render(); if (pub) publishAlerts(pub); });
 connect();
 window.__schedRender = render;
 };
