@@ -647,6 +647,22 @@ function viewRequests() {
 
 function describe(c) { const mo = MONTHS[ym(S.month)[1] - 1]; const days = c.days.map(d => mo + ' ' + d).join(', '); const t = { off: 'off (best effort, S6)', want: 'wants call (best effort)', block: 'unavailable (firm)', protected: 'protected: not post-call (S2)', colorectal: 'big colorectal day: GS2 resident not post-call (S3)' }[c.type]; return `${c.type === 'colorectal' ? 'GS2' : c.name}: ${days} ${t}${c.reason ? ' — ' + c.reason : ''}`; }
 function proposalsHTML() { if (!S.proposals.length) return ''; return `<h3 style="margin-bottom:6px">Claude's reading</h3><ul class="issues">${S.proposals.map((c, i) => `<li class="${c.problem ? 'hard' : 'soft'}">${esc(describe(c))}${c.problem ? ` <b>— ${esc(c.problem)}</b>` : ''}<span style="float:right;display:flex;gap:6px">${c.problem || !canDecide() ? '' : `<button class="btn" data-acc="${i}" style="padding:1px 8px">Accept</button>`}<button class="btn" data-rej="${i}" style="padding:1px 8px">Reject</button></span></li>`).join('')}</ul>`; }
+// Read a PD comment and pull out the specific requests in it (off / on call / not post-call). Never saves anything.
+async function readPdRequests(k, text) {
+  const st = S.M[k], [y, m] = ym(k), roster = Object.entries(st.inputs || {}).map(([n, r]) => `${n} (${LEVEL(n)}, ${r.rotation})`).join('; ');
+  const prompt = `A residency program director sent a call schedule back to the schedulers with this comment. Pull out only the SPECIFIC scheduling requests in it.
+Month: ${MONTHS_LONG[m - 1]} ${y} (day 1 is a ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][E.dow(y, m, 1)]}; ${ndays(k)} days). Roster: ${roster}. Nicknames: ${DATA.nicknames || 'none'}.
+Types: "off" = that person must not be on call those days; "want" = that person must be on call those days; "protected" = that person must not be post-call that day (exam, event).
+If a weekend is meant, include Fri, Sat and Sun. Day numbers in this month only. Skip anything vague or general (e.g. "make weekends fairer"): put those in "other".
+Return JSON only: {"rules":[{"type":"off|want|protected","name":"<exact roster name>","days":[<ints>]}],"other":"<anything not turned into a rule, or empty>"}.
+Comment:
+${text}`;
+  const { data: v, error } = await sb.functions.invoke('interpret-notes', { body: { prompt } });
+  if (error || (v && v.error)) throw new Error(await fnError(error, v));
+  const rules = ((v && v.rules) || []).map(r => ({ type: r.type, name: r.name, days: (r.days || []).map(Number).filter(d => d >= 1 && d <= ndays(k)) }))
+    .filter(r => ['off', 'want', 'protected'].includes(r.type) && st.inputs[r.name] && r.days.length);
+  return { rules, other: (v && v.other) || '' };
+}
 async function interpret() {
   const st = cur(); const txt = $('#notes').value.trim(); if (!txt) return; S.notes[S.month] = txt; saveNotes(S.month);
   const [y, m] = ym(S.month); const roster = Object.entries(st.inputs).map(([n, r]) => `${n} (${LEVEL(n)}, ${r.rotation})`).join('; ');
@@ -694,8 +710,8 @@ function pdNoteText(l) { const m = l.text.match(/(Sent back|PD approved; sent to
 function pdNotesPanel(st) { const L = pdNotes(st).map(l => Object.assign({ at: l.at }, pdNoteText(l))).filter(x => x.note); if (!L.length) return '';
   return `<div class="panel pdnotes"><h3>PD comments (${L.length})</h3><ul class="issues">${L.map((x, i) => `<li class="${x.kind === 'Sent back' ? 'soft' : 'ok'} small"><b>${x.kind}${i === 0 ? ' (latest)' : ''}:</b> “${esc(x.note)}” <span class="muted">· ${new Date(x.at).toLocaleString()}</span></li>`).join('')}</ul></div>`; }
 function pdBanner(st) { if (!(isScheduler() && st.status === 'Scheduler review')) return ''; const l = pdNotes(st).map(pdNoteText).find(x => x && x.kind === 'Sent back' && x.note); if (!l) return '';
-  const un = unmetRequests(S.month).filter(u => u.pd), hasPd = cons(S.month).some(c => c.source === 'pd');
-  return `<div class="banner pdbanner"><b>The PD sent this back:</b> “${esc(l.note)}” <a href="#approval">All PD comments</a>${un.length ? `<div style="margin-top:6px">Her requests are already accepted but not in the schedule yet: <b>${esc(un.map(u => u.what).join('; '))}</b>. <button class="btn primary" id="pdRebuild" style="margin-left:6px">Rebuild with the PD’s requests</button></div>` : hasPd ? '<div style="margin-top:6px">✓ The PD’s requests are in the schedule. Send it back to her when you’re ready.</div>' : ''}</div>`; }
+  const un = unmetRequests(S.month).filter(u => u.pd), hasPd = cons(S.month).some(c => c.source === 'pd'), attached = /Requests \(already accepted\)/.test(l.note) || S.requests.some(r => r.month_key === S.month && r.source === 'pd' && /send-back comment/.test(r.note || '')), comment = l.note.split(' · Requests (already accepted)')[0];
+  return `<div class="banner pdbanner"><b>The PD sent this back:</b> “${esc(comment)}” <a href="#approval">All PD comments</a>${un.length ? `<div style="margin-top:6px">Her requests are already accepted but not in the schedule yet: <b>${esc(un.map(u => u.what).join('; '))}</b>. <button class="btn primary" id="pdRebuild" style="margin-left:6px">Rebuild with the PD’s requests</button></div>` : hasPd && attached ? '<div style="margin-top:6px">✓ The PD’s requests are in the schedule. Send it back to her when you’re ready.</div>' : ''}${!attached ? `<div style="margin-top:6px">She didn’t attach specific requests. <button class="btn" id="pdRead" data-note="${esc(comment)}">Read her comment with Claude</button></div>` : ''}</div>`; }
 function viewApproval() {
   const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role, previewing = roleKey(S.role) !== S.realRole;
   let actions = '';
@@ -975,7 +991,7 @@ function rosterPanel() {
   const ed = isScheduler(), names = ROSTER_NAMES();
   return `<div class="panel" style="margin-top:14px"><h3>Call roster (${names.length})</h3><p class="small muted">Who's on this year's schedules. This is separate from accounts: the roster is who gets scheduled; accounts are who can sign in. Removing someone takes them off upcoming months that aren't published yet. Past months and history keep them.${ed ? '' : ' A scheduler or chief edits the roster.'}</p>
     <div class="tablewrap"><table style="max-width:560px"><thead><tr><th>Roster name</th><th>Level</th><th></th></tr></thead><tbody>
-    ${names.map(n => `<tr><td>${esc(n)}</td><td><select class="f" data-rpgy="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} level">${PGYS.map(([v, l]) => `<option value="${v}" ${String(DATA.pgy[n]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td style="white-space:nowrap">${ed ? `<button class="linkish small" data-rren="${esc(n)}" title="Fix a typo in this roster name everywhere">Rename</button> <button class="btn" data-rrm="${esc(n)}" style="padding:1px 8px">Remove</button>` : ''}</td></tr>`).join('')}
+    ${names.map(n => `<tr><td>${esc(n)}${ed ? ` <button class="linkish small" data-rren="${esc(n)}" title="Fix a typo in this roster name everywhere">Rename</button>` : ''}</td><td><select class="f" data-rpgy="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} level">${PGYS.map(([v, l]) => `<option value="${v}" ${String(DATA.pgy[n]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td>${ed ? `<button class="btn" data-rrm="${esc(n)}" style="padding:1px 8px">Remove</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>
     ${ed ? `<h3 style="margin-top:14px">Add to the roster</h3><div class="kv small" style="max-width:560px"><label for="rnName">Roster name</label><input id="rnName" type="text" placeholder="first name as it appears on the schedule">
       <label for="rnPgy">Level</label><select id="rnPgy" class="f">${PGYS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
@@ -1139,6 +1155,19 @@ function wire() {
   document.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason || '', status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'claude', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); askRebuild(k); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
   document.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => { S.proposals.splice(+b.dataset.rej, 1); render(); });
   document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { const c = cons(k).find(x => x.id === +b.dataset.rm); if (!c) return; if (c.source === 'resident') await setRequest(c.id, { status: 'denied', reason: 'Removed by a scheduler', decided_by: me.id, decided_at: new Date().toISOString() }); else await dropRequest(c.id); logEvent(k, 'Removed rule: ' + describe(c)); save(); render(); });
+  on('#pdRead', async () => { const b = $('#pdRead'), note = b.dataset.note; b.disabled = true; b.textContent = 'Reading…';
+    let res; try { res = await readPdRequests(k, note); } catch (e) { b.disabled = false; b.textContent = 'Read her comment with Claude'; return toast('Claude couldn’t read it: ' + ((e && e.message) || 'error')); }
+    b.disabled = false; b.textContent = 'Read her comment with Claude'; const mo = MONTHS[ym(k)[1] - 1], lab = { off: 'off (no call)', want: 'on call', protected: 'not post-call' };
+    if (!res.rules.length) return toast('Claude found no specific day-by-day requests in her comment.');
+    modal(`<h3 style="margin-top:0">Claude’s reading of the PD’s comment</h3><p class="small muted">“${esc(note)}”</p>
+      <ul class="issues">${res.rules.map((r, i) => `<li class="soft small"><label class="row" style="gap:8px"><input type="checkbox" data-pr="${i}" checked> <b>${esc(r.name)}</b> ${lab[r.type]} · ${r.days.map(d => mo + ' ' + d).join(', ')}</label></li>`).join('')}</ul>
+      ${res.other ? `<p class="small">Not turned into a request: “${esc(res.other)}”</p>` : ''}
+      <p class="small">Ticked ones are added as the PD’s requests (always honored) and noted as read by Claude from her comment. Untick anything that’s wrong.</p>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="prAdd">Add and rebuild</button></div>`, (ov, close) => {
+      ov.querySelector('#prAdd').onclick = async () => { const pick = res.rules.filter((_, i) => ov.querySelector(`[data-pr="${i}"]`).checked); if (!pick.length) return close(); close();
+        for (const r of pick) await addRequest({ month_key: k, resident: r.name, type: r.type, days: r.days, note: 'From the PD’s send-back comment (read by Claude)', status: 'accepted', source: 'pd', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() });
+        logEvent(k, `Added the PD’s requests from her comment: ${pick.map(r => `${r.name} ${lab[r.type]} ${r.days.map(d => mo + ' ' + d).join(', ')}`).join('; ')}`);
+        generate(true, k, `${monthName(k)} rebuilt with the PD’s requests. All hard rules met.`); }; }); });
   on('#pdRebuild', () => generate(true, k, `${monthName(k)} rebuilt with the PD’s requests. All hard rules met.`));
   on('#applyNotes', () => generate(true, k, `${monthName(k)} rebuilt with these requests. All hard rules met.`));
   on('#addManual', async () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason, status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'admin', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); askRebuild(k); });
@@ -1165,16 +1194,32 @@ function wire() {
   on('#unapprove', () => { st.status = 'Scheduler review'; logEvent(k, 'Reopened after PD approval (needs PD review again)'); save(); render(); });
   on('#approve', () => { st.status = 'Published'; saveVersion('Approved'); logEvent(k, 'Approved and published' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
   on('#sendBack', () => { const names = Object.keys(st.inputs || {}), nd = ndays(k), mo = MONTHS[ym(k)[1] - 1];
-    const row = () => `<div class="row sbrow" style="gap:6px;flex-wrap:wrap;margin-top:6px"><select class="f sbName" aria-label="Resident">${names.map(n => `<option>${esc(n)}</option>`).join('')}</select><select class="f sbType" aria-label="Request"><option value="off">off (no call)</option><option value="want">on call</option><option value="protected">not post-call</option></select><input type="text" class="sbDays" placeholder="${mo} days, e.g. 14 or 11-13" style="width:170px" aria-label="Days"></div>`;
+    const row = (r) => `<div class="row sbrow" style="gap:6px;flex-wrap:wrap;margin-top:6px"><select class="f sbName" aria-label="Resident">${names.map(n => `<option ${r && r.name === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><select class="f sbType" aria-label="Request">${[['off', 'off (no call)'], ['want', 'on call'], ['protected', 'not post-call']].map(([v, l]) => `<option value="${v}" ${r && r.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select><input type="text" class="sbDays" value="${r ? r.days.join(', ') : ''}" placeholder="${mo} days, e.g. 14 or 11-13" style="width:170px" aria-label="Days"><button class="linkish small sbDel" title="Remove this request" aria-label="Remove this request">Remove</button></div>`;
     modal(`<h3 style="margin-top:0">Send ${esc(monthName(k))} back</h3>
       <label class="small" for="sbNote">Comment for the schedulers</label><textarea id="sbNote" rows="3" style="width:100%;margin:4px 0 10px" placeholder="What should change?">${esc($('#pdNote') ? $('#pdNote').value : '')}</textarea>
-      <div class="small"><b>Specific requests (optional).</b> These are accepted automatically and always honored, so the schedulers only have to rebuild.</div>
+      <div class="small"><b>Specific requests.</b> These are accepted automatically and always honored, so the schedulers only have to rebuild. When you hit Send back, Claude reads your comment and fills these in for you to check.</div>
+      <div id="sbRead" class="small" style="margin-top:6px" hidden></div>
       <div id="sbRows">${row()}</div><button class="linkish small" id="sbMore" style="margin-top:6px">+ another request</button>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sbGo">Send back</button></div>`, (ov, close) => {
       ov.querySelector('#sbMore').onclick = () => ov.querySelector('#sbRows').insertAdjacentHTML('beforeend', row());
-      ov.querySelector('#sbGo').onclick = async () => { const note = ov.querySelector('#sbNote').value.trim();
+      ov.querySelector('#sbRows').onclick = e => { if (e.target.classList.contains('sbDel')) e.target.closest('.sbrow').remove(); };
+      let readFor = null; // the comment text Claude last read; re-read if she changes it
+      const go = ov.querySelector('#sbGo');
+      go.onclick = async () => { const note = ov.querySelector('#sbNote').value.trim();
+        if (note && readFor !== note) { // Claude reads the comment first; she checks the rows, then sends
+          readFor = note; go.disabled = true; go.textContent = 'Reading your comment…'; const box = ov.querySelector('#sbRead');
+          try { const { rules, other } = await readPdRequests(k, note); const rows = ov.querySelector('#sbRows');
+            [...rows.querySelectorAll('.sbrow')].forEach(r => { if (!r.querySelector('.sbDays').value.trim()) r.remove(); });
+            const have = new Set([...rows.querySelectorAll('.sbrow')].map(r => r.querySelector('.sbName').value + '|' + r.querySelector('.sbType').value + '|' + parseDays(r.querySelector('.sbDays').value, nd).join(',')));
+            rules.filter(r => !have.has(r.name + '|' + r.type + '|' + r.days.join(','))).forEach(r => rows.insertAdjacentHTML('beforeend', row(r)));
+            if (!rows.querySelector('.sbrow')) rows.insertAdjacentHTML('beforeend', row());
+            box.hidden = false; box.innerHTML = rules.length ? `<b>Claude read ${rules.length} request${rules.length > 1 ? 's' : ''} in your comment.</b> Check ${rules.length > 1 ? 'them' : 'it'} below (fix or remove anything wrong), then hit Send back.${other ? ` Left as a comment: “${esc(other)}”` : ''}`
+              : '<b>Claude found no specific day-by-day requests</b> in your comment, so it will go as a comment only. Add a request below if you meant one, or hit Send back.';
+          } catch (e) { box.hidden = false; box.innerHTML = `Claude couldn’t read the comment (${esc((e && e.message) || 'error')}). Add any requests below by hand, or hit Send back.`; }
+          go.disabled = false; go.textContent = 'Send back'; return; }
         const reqs = [...ov.querySelectorAll('.sbrow')].map(r => ({ name: r.querySelector('.sbName').value, type: r.querySelector('.sbType').value, days: parseDays(r.querySelector('.sbDays').value, nd) })).filter(r => r.days.length);
         if (!note && !reqs.length) return toast('Add a comment or a request so the schedulers know what to change.');
+        go.disabled = true;
         close(); const lab = { off: 'off', want: 'on call', protected: 'not post-call' };
         for (const r of reqs) await addRequest({ month_key: k, resident: r.name, type: r.type, days: r.days, note: 'PD, with send-back', status: 'accepted', source: 'pd', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() });
         const rtxt = reqs.map(r => `${r.name} ${lab[r.type]} ${r.days.map(d => mo + ' ' + d).join(', ')}`).join('; ');

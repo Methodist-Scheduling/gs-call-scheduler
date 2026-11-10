@@ -123,7 +123,7 @@
     ],
     pd: [
       { id: 'open', tab: 'approval', t: 'Open the schedule you were sent', d: 'Approval tab: the schedulers sent December for your review. Look over the calendar on the Schedule tab too.' },
-      { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Try “Send back with changes”: write a comment and, if you like, add a specific request (it’s accepted automatically). The pretend schedulers return a changed version in about 10 seconds. Then approve.' },
+      { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Try “Send back with changes”: write a comment like “Can [a resident] be off the 14th?” and hit Send back. Claude reads it and fills in the request for you to check; requests are accepted automatically. The pretend schedulers return a changed version in about 10 seconds. Then approve.' },
       { id: 'att', tab: 'inputs', t: 'Enter the attendings', d: 'Inputs tab → Attendings (top). Use the Fill bar: pick “Trauma AM + PM”, type a name, choose days 1–7, Fill. Do SICU and EGS/TBU the same way. Fill at least a week.' },
       { id: 'req', tab: 'notes', t: 'Make a request (yours are always honored)', d: 'Requests tab → “Add a rule by hand”: give anyone a day off, block a day, or protect an event, for a resident or for yourself. Anything you add is always honored, and the schedulers see it marked “PD”. Try one, e.g. a resident off on Dec 18.' },
       { id: 'cal', tab: 'schedule', t: 'See them on the calendar', d: 'Schedule tab: attendings now show under each day, for everyone, and on the PDF.' },
