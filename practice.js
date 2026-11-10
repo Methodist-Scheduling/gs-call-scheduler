@@ -122,11 +122,11 @@
       { id: 'answer', tab: 'notes', t: 'Answer a trade someone asked you for', d: 'Requests tab → Trades: another resident wants one of your calls. Agree or decline. If you agree, a scheduler still has to approve it.' }
     ],
     pd: [
+      { id: 'att', tab: 'inputs', t: 'Enter the attendings (before you approve)', d: 'December is waiting for your review, but attendings come first. Inputs tab → Attendings (top). Use the Fill bar: pick “Trauma AM + PM”, type a name, choose days 1–7, Fill. Do SICU and EGS/TBU the same way. Fill at least a week.' },
+      { id: 'cal', tab: 'schedule', t: 'See them on the calendar', d: 'Schedule tab: attendings now show under each day, for everyone, and on the PDF.' },
       { id: 'open', tab: 'approval', t: 'Open the schedule you were sent', d: 'Approval tab: the schedulers sent December for your review. Look over the calendar on the Schedule tab too.' },
       { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Try “Send back with changes”: write a comment like “Can [a resident] be off the 14th?” and hit Send back. Claude reads it and fills in the request for you to check; requests are accepted automatically. The pretend schedulers return a changed version in about 10 seconds. Then approve.' },
-      { id: 'att', tab: 'inputs', t: 'Enter the attendings', d: 'Inputs tab → Attendings (top). Use the Fill bar: pick “Trauma AM + PM”, type a name, choose days 1–7, Fill. Do SICU and EGS/TBU the same way. Fill at least a week.' },
       { id: 'req', tab: 'notes', t: 'Make a request (yours are always honored)', d: 'Requests tab → “Add a rule by hand”: give anyone a day off, block a day, or protect an event, for a resident or for yourself. Anything you add is always honored, and the schedulers see it marked “PD”. Try one, e.g. a resident off on Dec 18.' },
-      { id: 'cal', tab: 'schedule', t: 'See them on the calendar', d: 'Schedule tab: attendings now show under each day, for everyone, and on the PDF.' },
       { id: 'stats', tab: 'dashboard', t: 'Look at Stats', d: 'This month and Year to date. Hover any number or bar for details.' },
       { id: 'rules', tab: 'rules', t: 'Rules', d: 'You can change any setting here (targets, limits, two-person exceptions). Every rule is written out in plain English below.' },
       { id: 'hist', tab: 'history', t: 'History', d: 'Past months as published, and how the app would have done them. Hover a number to see where the problems were.' }
@@ -165,7 +165,7 @@
               if (!st.swapsMade) { st.swapsMade = true; setTimeout(() => makeSwaps(), BOT_DELAY); } }
             if (kind === 'pd' && m.status === 'Scheduler review' && !st.revised) { done.add('decide-wait'); st.revised = true; setTimeout(() => reviseForPD(), BOT_DELAY); }
             if (kind === 'pd' && (m.status === 'Approved' || m.status === 'Published')) { done.add('decide');
-              if (m.status === 'Approved') setTimeout(() => { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Published' }); msg('The schedulers published it', 'Residents can now see December. Next on your list: attendings.'); }, BOT_DELAY); }
+              if (m.status === 'Approved') setTimeout(() => { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Published' }); msg('The schedulers published it', 'Residents can now see December, attendings included.'); }, BOT_DELAY); }
           });
           if (t === 'requests' && op === 'insert' && kind === 'pd' && rows.some(r => r.source === 'pd')) done.add('req');
           if (kind === 'res' && t === 'requests' && op === 'insert') { done.add('req'); rows.forEach(r => setTimeout(() => {
@@ -277,7 +277,7 @@
       setTimeout(() => msg(`Welcome to practice, ${String(profile.display_name || '').split(' ')[0]}`, kind === 'res'
         ? `This is a private practice copy: try anything, nothing is saved or seen by anyone. December is published. The checklist (${where}) shows you how to find your calls, ask for a day off, and trade calls. Pretend residents and schedulers answer in about 10 seconds.`
         : kind === 'pd'
-        ? `This is a private practice copy: try anything, nothing is saved or seen by anyone. The schedulers just sent you December. The checklist (${where}) walks you through approving it, making requests and entering the month’s attendings.`
+        ? `This is a private practice copy: try anything, nothing is saved or seen by anyone. The schedulers just sent you December. The checklist (${where}) walks you through entering the month’s attendings, then approving it and making requests.`
         : `This is a private practice copy: try anything, nothing is saved or seen by anyone. Five residents have sent requests for December. The checklist (${where}) walks you through building, sending to the PD, publishing and handling swaps. Pretend people answer in about 10 seconds.`), 600);
       return { sb: fake, profile: me, months: clone(T.months), versions: clone(T.versions).map(v => Object.assign({}, v)), logs: clone(T.activity_log) };
     }

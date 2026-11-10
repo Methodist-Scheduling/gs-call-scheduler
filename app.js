@@ -183,7 +183,7 @@ async function loadSwaps() { const { data } = await sb.from('swaps').select('*')
 // ---------- attendings (Trauma AM/PM, SICU, EGS/TBU per day; own table so the PD can edit and everyone can read) ----------
 S.att = {}; let attPending = 0; const attTimers = {}, attDirty = {};
 const ATT_COLS = [['tam', 'Trauma AM'], ['tpm', 'Trauma PM'], ['sicu', 'SICU'], ['egs', 'EGS/TBU']];
-const canAtt = () => isScheduler() || S.role === 'Program Director';
+const canAtt = () => adminView(); // every admin, any time (published months too); attendings don't change calls, so no rebuild
 async function loadAtt() { const { data, error } = await sb.from('attendings').select('month_key,data'); if (!error) { S.att = {}; (data || []).forEach(r => S.att[r.month_key] = r.data || {}); Object.entries(attDirty || {}).forEach(([k, dd]) => Object.entries(dd).forEach(([dc, v]) => { const [d, c] = dc.split('|'); setAtt(k, +d, c, v, true); })); } }
 // Save only the cells this person changed, merged into the latest copy, so two people editing (or a stale screen) never wipe each other's entries
 function saveAtt(k, immediate) { clearTimeout(attTimers[k]); const st_ = $('#attStatus'); if (st_) st_.textContent = 'Saving…'; attTimers[k] = setTimeout(async () => { attPending++;
@@ -209,7 +209,7 @@ function attendingsPanel(k) {
   const rows = Array.from({ length: nd }, (_, i) => i + 1).map(d => { const w = E.dow(y, m, d), wk = w === 0 || w === 6;
     return `<tr class="${wk ? 'wkrow' : ''}"><td class="small" style="white-space:nowrap">${DOW[w]} ${d}</td>${ATT_COLS.map(([c, l]) => `<td><input type="text" class="att-in" list="attNames" data-att="${d}|${c}" value="${esc((A[d] || {})[c] || '')}" ${ed ? '' : 'disabled'} aria-label="${l} attending, ${monthName(k)} ${d}"></td>`).join('')}</tr>`; }).join('');
   return `<div class="panel" style="margin-top:14px" id="attPanel"><div class="row" style="gap:10px;align-items:center"><h3 style="margin:0">Attendings · ${monthName(k)}</h3><span class="spacer"></span>${ed ? `<span class="small muted" id="attStatus">Saves as you type</span><button class="btn primary" id="attSave">Save</button>` : ''}</div>
-    <p class="small muted">Shown to everyone on the calendar and the PDF. ${ed ? 'Type a name per day, or fill a stretch of days at once below. Pasting a list (one name per line) fills down from that day.' : 'Schedulers, chiefs and the PD edit these.'}</p>
+    <p class="small muted">Shown to everyone on the calendar and the PDF as soon as they're saved, published months included. They don't change who's on call, so no rebuild is needed. ${ed ? 'Type a name per day, or fill a stretch of days at once below. Pasting a list (one name per line) fills down from that day.' : 'Admins edit these.'}</p>
     ${ed ? `<div class="row small" style="gap:8px;flex-wrap:wrap;margin-bottom:10px"><b>Fill</b><select id="afCol" class="f">${ATT_COLS.map(([c, l]) => `<option value="${c}">${l}</option>`).join('')}<option value="tr">Trauma AM + PM</option></select>
       <input id="afName" type="text" list="attNames" placeholder="Attending" style="width:150px"> from <select id="afFrom" class="f">${Array.from({ length: nd }, (_, i) => `<option>${i + 1}</option>`).join('')}</select> to <select id="afTo" class="f">${Array.from({ length: nd }, (_, i) => `<option ${i + 1 === Math.min(7, nd) ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>
       <button class="btn primary" id="afGo">Fill</button><button class="btn" id="afClear">Clear those days</button></div>` : ''}
