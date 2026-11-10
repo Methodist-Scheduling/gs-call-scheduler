@@ -31,3 +31,10 @@ Monthly call-schedule builder for a General Surgery residency. The PGY-4 schedul
 
 ## New academic year
 Update the setup bundle (`pgy`, `rotations` per month, `holidays`) and re-upload it from the app (admins). Add holiday dates in `build-input.js` (`HOLIDAYS`) and names in `app.js` (`HOLNAMES`).
+
+## Tests
+
+`node tests/rules-test.js <setup bundle .json>` builds December and January with the engine and checks the rules
+(hard rules, holiday trios, T/EGS always two rounders, one team per holiday from that holiday's call pool, GS1 + GS2
+sharing, off weekends, no roster names in this public repo). Read-only: it never touches the site or the database.
+The roster bundle is private and is not in this repo. Run it after every change to `engine.js` or the rounding code.

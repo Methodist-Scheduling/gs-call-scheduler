@@ -88,7 +88,7 @@
     } else if (role === 'pd') {
       T.months.push({ key: '2026-12', status: 'PD review', data: { A: clone(A) }, updated_at: now() });
       T.versions.push({ month_key: '2026-12', n: 1, status: 'PD review', schedule: clone(A), changed: null, created_at: now() });
-      T.activity_log.push({ month_key: '2026-12', at: now(), text: 'Lainie (Scheduler): Sent to the PD for review' });
+      T.activity_log.push({ month_key: '2026-12', at: now(), text: 'Scheduler: Sent to the PD for review' });
     } else {
       // a handful of resident requests waiting to be decided
       const offs = [[pick(low, 1), 'off', [12], 'Brother’s wedding'], [pick(low, 3), 'off', [19, 20], 'Out of town'], [pick(low, 5), 'want', [6], 'Trading for a weekend later'], [pick(low, 7), 'off', [31], 'New Year’s with family'], [pick(low, 9), 'protected', [16], 'Mock orals']];

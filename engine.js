@@ -352,7 +352,11 @@
     const HS = new Set((holidays || []).filter(d => d >= 1 && d <= P.nd));
     WK.forEach(w => { const first = w.days[0], last = w.days.at(-1); if (w.days.some(d => HS.has(d)) || HS.has(last + 1) || HS.has(first - 1)) w.days.forEach(d => HS.add(d)); });
     const holBlocks = []; [...HS].sort((a, c) => a - c).forEach(d => { const bl = holBlocks.at(-1); if (bl && bl.at(-1) === d - 1) bl.push(d); else holBlocks.push([d]); });
-    const holRec = {}; holBlocks.forEach(bl => { const rec = applyOvr(build(bl, bl[0], new Set(), false, true, null, true), bl[0]); rec.holiday = true;
+    // A holiday that began last month (New Year: Dec 30–Jan 3) keeps last month's team, even though rotations change on the 1st
+    const carry = P.input.carryHoliday;
+    const holRec = {}; holBlocks.forEach(bl => { const built = build(bl, bl[0], new Set(), false, true, null, true);
+      if (carry && bl[0] === 1) { Object.keys(built.blocks).forEach(k => { built.blocks[k] = (carry[k] || []).slice(); }); built.carried = true; }
+      const rec = applyOvr(built, bl[0]); rec.holiday = true;
       rec.weekend = bl.some(d => [0, 5, 6].includes(P.days[d - 1].w)); rec.holidayDays = bl.slice(); bl.forEach(d => { holRec[d] = rec; }); });
     WK.forEach((w, i) => {
       const days = w.days;

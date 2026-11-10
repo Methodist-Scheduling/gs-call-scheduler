@@ -72,6 +72,10 @@ function buildInput(k) {
   picksOf(k).forEach(p => { if (!inp.locks.some(l => l.day === p.day && l.slot === 'U')) inp.locks.push({ day: p.day, slot: 'U', name: p.name }); });
   Object.entries(st.locks).forEach(([kk, name]) => { const [d, s] = kk.split('|'); if (!inp.locks.some(l => l.day === +d && l.slot === s)) inp.locks.push({ day: +d, slot: s, name: name || null }); });
   inp.rndOverride = st.rndEdit || {};
+  { // a holiday running over from last month (New Year) keeps last month's rounding team
+    const pi = KEYS.indexOf(k) - 1, pk = pi >= 0 ? KEYS[pi] : null;
+    if (pk && S.M[pk].A && (B.HOLIDAYS[k] || []).includes(1) && (B.HOLIDAYS[pk] || []).includes(ndays(pk))) {
+      try { const r = E.roundingBlocks(E.prepare(buildInput(pk)), S.M[pk].A, B.HOLIDAYS[pk] || [])[ndays(pk)]; if (r) inp.carryHoliday = JSON.parse(JSON.stringify(r.blocks)); } catch (e) {} } }
   cons(k).forEach(c => {
     if (c.source === 'pd') { // requests the PD adds are always honored
       if (c.type === 'off') { const p = inp.people.find(p => p.name === c.name); if (p) p.blockDays = (p.blockDays || []).concat(c.days); return; }
@@ -361,7 +365,7 @@ function viewSchedule() {
   const locked = (d, s, n) => !adminView() ? '' : isHolidayLock(k, d) ? 'holiday' : st.locks[d + '|' + s] !== undefined ? 'locked' : picked.has(d + '|' + n) ? 'picked' : (s === 'U' && n && [5, 'F'].includes(DATA.pgy[n])) ? 'proposed' : '';
   const estList = [...new Set(Object.values(est))];
   const [ky, km] = ym(k); const recs = []; Object.keys(rb).map(Number).sort((a, b) => a - b).forEach(d => { const r = rb[d]; if (recs.length && recs.at(-1).r === r) return; const w = E.dow(ky, km, d); if (r.weekend && w === 5 && rb[d + 1] === r) return; recs.push({ d, r }); });
-  const recLabel = ({ d, r }) => { const ds = Object.keys(rb).map(Number).filter(x => rb[x] === r).sort((a, b) => a - b); const shown = r.weekend ? ds.filter(x => E.dow(ky, km, x) !== 5) : ds; const mo = MONTHS[km - 1]; const carry = r.holiday && ds.at(-1) === ndays(k) ? holidayCarry(k) : null; return (carry ? `${mo} ${shown[0]}\u2013${MONTHS[ym(carry.nk)[1] - 1]} ${carry.days.at(-1)}` : shown.length > 1 ? `${mo} ${shown[0]}\u2013${shown.at(-1)}` : `${mo} ${shown[0]}`) + (r.holiday ? ' (holiday)' : (HOLNAMES[k] || {})[shown[0]] ? ' (holiday weekend)' : ''); };
+  const recLabel = ({ d, r }) => { const ds = Object.keys(rb).map(Number).filter(x => rb[x] === r).sort((a, b) => a - b); const shown = r.weekend && !r.holiday ? ds.filter(x => E.dow(ky, km, x) !== 5) : ds; const mo = MONTHS[km - 1]; const carry = r.holiday && ds.at(-1) === ndays(k) ? holidayCarry(k) : null; return (carry ? `${mo} ${shown[0]}\u2013${MONTHS[ym(carry.nk)[1] - 1]} ${carry.days.at(-1)}` : shown.length > 1 ? `${mo} ${shown[0]}\u2013${shown.at(-1)}` : `${mo} ${shown[0]}`) + (r.holiday ? ' (holiday)' : (HOLNAMES[k] || {})[shown[0]] ? ' (holiday weekend)' : ''); };
   const BL = ['Trauma/EGS', 'ICU', 'GS1', 'GS2', 'Vasc/Thor', 'HPB/Transplant'];
   const holPanel = k === '2026-12' ? (() => { const { x, n } = trios(); return `<div class="panel"><h3>Holiday trios</h3><p class="small muted">HD3: the app pairs each Working list into two H2 trios. A scheduler or chief picks which starts.</p>
     <div class="kv small"><b>Dec 23, 25, 27</b><span>${x[0].slice().reverse().join(' / ')}</span><b>Dec 24, 26</b><span>${x[1].slice().reverse().join(' / ')}</span><b>Dec 30, Jan 1, 3</b><span>${n[0].slice().reverse().join(' / ')}</span><b>Dec 31, Jan 2</b><span>${n[1].slice().reverse().join(' / ')}</span></div>
