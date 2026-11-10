@@ -111,7 +111,7 @@
       { id: 'build', tab: 'schedule', t: 'Rebuild the schedule', d: 'Schedule tab: “Regenerate around locks” keeps what’s locked and redoes the rest with the accepted requests. Click any name to edit a day by hand.' },
       { id: 'stats', tab: 'dashboard', t: 'Check Stats', d: 'Look for anyone under or over target, every-other-day calls, and weekend balance. Click an item to see it on a calendar.' },
       { id: 'send', tab: 'approval', t: 'Send it to the PD', d: 'Approval tab: “Send to the PD”. The pretend PD answers in about 10 seconds: approved, or sent back with a note.' },
-      { id: 'approved', tab: 'approval', t: 'Get it approved', d: 'If the PD sent it back, make the change she asked for and send it again. Once approved, move on.' },
+      { id: 'approved', tab: 'approval', t: 'Get it approved', d: 'If the PD sent it back, her request is already accepted: hit “Rebuild with the PD’s requests” on the Schedule tab, then send it again. Once approved, move on.' },
       { id: 'publish', tab: 'approval', t: 'Publish it', d: 'Approval tab: “Publish”. Residents would now see it. About 10 seconds later, a couple of residents ask to trade calls.' },
       { id: 'swaps', tab: 'notes', t: 'Handle the swap requests', d: 'Requests tab → Swaps: both residents already agreed. Approve or deny (the app shows any rule a swap would break).' }
     ],
@@ -123,7 +123,7 @@
     ],
     pd: [
       { id: 'open', tab: 'approval', t: 'Open the schedule you were sent', d: 'Approval tab: the schedulers sent December for your review. Look over the calendar on the Schedule tab too.' },
-      { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Send it back with a note to see what happens: the pretend schedulers return a changed version in about 10 seconds (changed days are listed for you). Then approve.' },
+      { id: 'decide', tab: 'approval', t: 'Approve it, or send it back', d: 'Try “Send back with changes”: write a comment and, if you like, add a specific request (it’s accepted automatically). The pretend schedulers return a changed version in about 10 seconds. Then approve.' },
       { id: 'att', tab: 'inputs', t: 'Enter the attendings', d: 'Inputs tab → Attendings (top). Use the Fill bar: pick “Trauma AM + PM”, type a name, choose days 1–7, Fill. Do SICU and EGS/TBU the same way. Fill at least a week.' },
       { id: 'req', tab: 'notes', t: 'Make a request (yours are always honored)', d: 'Requests tab → “Add a rule by hand”: give anyone a day off, block a day, or protect an event, for a resident or for yourself. Anything you add is always honored, and the schedulers see it marked “PD”. Try one, e.g. a resident off on Dec 18.' },
       { id: 'cal', tab: 'schedule', t: 'See them on the calendar', d: 'Schedule tab: attendings now show under each day, for everyone, and on the PDF.' },
@@ -155,8 +155,9 @@
                 const sendBack = !st.sentOnce && Math.random() < 0.6; st.sentOnce = true;
                 if (sendBack) { const d = weekdays()[Math.floor(Math.random() * 6) + 4], n = nameOf(A, d, 'M') || nameOf(A, d, 'I');
                   fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Scheduler review' });
-                  fake.bot('activity_log', 'insert', { user_id: 'ppd', month_key: '2026-12', text: `Program Director (PD): Sent back: Can ${n} be off on Dec ${d}? Family thing. Otherwise looks good.` });
-                  msg('The PD sent it back', `“Can <b>${n}</b> be off on <b>Dec ${d}</b>? Family thing. Otherwise looks good.”<br><br>Her comment stays at the top of the Schedule tab and under “PD comments” on Approval, so you won’t lose it. Click ${n}’s name on Dec ${d} on the Schedule tab to swap someone in (or add an “off” request and rebuild), then send it to the PD again.`);
+                  fake.bot('requests', 'insert', { month_key: '2026-12', resident: n, type: 'off', days: [d], note: 'PD, with send-back', status: 'accepted', source: 'pd', reason: '', created_by: 'ppd', decided_by: 'ppd', decided_at: now() });
+                  fake.bot('activity_log', 'insert', { user_id: 'ppd', month_key: '2026-12', text: `Program Director (PD): Sent back: Can ${n} be off on Dec ${d}? Family thing. Otherwise looks good. · Requests (already accepted): ${n} off Dec ${d}` });
+                  msg('The PD sent it back', `“Can <b>${n}</b> be off on <b>Dec ${d}</b>? Family thing. Otherwise looks good.”<br><br>Her request is already accepted for you. On the Schedule tab, hit <b>Rebuild with the PD’s requests</b> in the yellow banner, then send it to her again. Her comment stays there and under “PD comments” on Approval.`);
                 } else { fake.bot('months', 'update', r => r.key === '2026-12', { status: 'Approved' }); fake.bot('activity_log', 'insert', { user_id: 'ppd', month_key: '2026-12', text: 'Program Director (PD): PD approved; sent to schedulers to publish: Looks great, thanks.' }); msg('The PD approved it', 'Go to the Approval tab and publish it when you’re ready.'); }
               }, BOT_DELAY); }
             if (kind === 'sched' && m.status === 'Approved') done.add('approved');

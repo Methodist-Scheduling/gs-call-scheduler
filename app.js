@@ -106,7 +106,7 @@ function estimated(A) { // calls that depend on an unconfirmed date
   });
   return out;
 }
-function generate(keepLocks, k) {
+function generate(keepLocks, k, doneMsg) {
   k = k || S.month; toast('Building the schedule…');
   setTimeout(() => {
     const st = S.M[k]; if (!keepLocks) st.locks = {};
@@ -116,7 +116,7 @@ function generate(keepLocks, k) {
     st.flags = keepLocks ? Object.fromEntries(Object.entries(st.flags || {}).filter(([kk]) => st.locks[kk] !== undefined)) : {};
     logEvent(k, keepLocks ? 'Regenerated around locked cells' : 'Generated a fresh draft');
     if (k === S.month) saveVersion(keepLocks ? 'Rebuilt' : 'New draft');
-    save(k); render(); toast(best.ev.hard ? 'Done, but some hard rules could not be met. See the list.' : 'Done. All hard rules met.');
+    save(k); render(); toast(best.ev.hard ? 'Rebuilt, but some hard rules could not be met. See the list on the Schedule tab.' : (doneMsg || 'Done. All hard rules met.'));
   }, 30);
 }
 
@@ -419,7 +419,7 @@ function viewInputs() {
   const L = S.people;
   return `<div class="row"><h2>${monthName(k)} inputs</h2><span class="muted small">Preloaded from the yearly schedule. The monthly schedule wins when they differ, so fix anything that changed here. Schedulers edit; PGY-5s and the fellow enter their own call picks (H10).</span></div>
   ${S.role === 'Program Director' ? attendingsPanel(k) : ''}
-  <div class="panel"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th>Rotation</th><th>Vacation days</th><th>Leave from</th><th>Leave to</th><th>Confirmed?</th><th>Call picks (PGY-5, fellow)</th></tr></thead><tbody>
+  <div class="panel"><div class="row" style="margin-bottom:10px;gap:10px"><h3 style="margin:0">Residents</h3><span class="spacer"></span><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div><div class="tablewrap"><table><thead><tr><th>Name</th><th>Level</th><th>Rotation</th><th>Vacation days</th><th>Leave from</th><th>Leave to</th><th>Confirmed?</th><th>Call picks (PGY-5, fellow)</th></tr></thead><tbody>
   ${ppl.map(n => { const v = st.inputs[n], lv = L[n] || {}, pick = [5, 'F'].includes(DATA.pgy[n]); const pickEd = st.status !== 'Published' && (isScheduler() || S.role === 'Chief');
     return `<tr><td>${esc(n)}</td><td>${LEVEL(n)}</td>
     <td><select class="f" data-in="rotation" data-n="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} rotation">${ROTATIONS.map(r => `<option ${r === v.rotation ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
@@ -430,7 +430,7 @@ function viewInputs() {
     <td>${pick ? `<input type="text" data-in="picks" data-n="${esc(n)}" value="${esc(v.picks)}" placeholder="e.g. 4, 9, 15" ${pickEd ? '' : 'disabled'} aria-label="${esc(n)} call picks">` : ''}</td></tr>`; }).join('')}
   </tbody></table></div>
   <p class="small muted">Vacation days are that month's dates (Mon–Fri block calls; weekends next to it are protected by S4). Leave dates carry across months. Unconfirmed leave dates show ⚠ on every call they affect. Call picks lock that person into the upper slot on those days.</p>
-  <div class="row"><button class="btn primary" id="inputsApply" ${isScheduler() && st.status !== 'Published' ? '' : 'disabled'}>Rebuild ${MONTHS_LONG[ym(k)[1] - 1]} with these inputs</button></div></div>
+  </div>
   ${S.role === 'Program Director' ? '' : attendingsPanel(k)}`;
 }
 function order(n) { const p = DATA.pgy[n]; return p === 'F' ? -1 : 6 - p; } // fellow first, then PGY-5 down to interns
@@ -510,6 +510,14 @@ function improvements(ev, P, ppl) {
   return out;
 }
 function requestMissDetail() { const st = cur(), out = []; cons(S.month).forEach(c => { if (c.type !== 'off' && c.type !== 'want') return; c.days.forEach(d => { const a = st.A && st.A[d - 1]; const hit = a && [a.U, a.M, a.I].includes(c.name); if ((c.type === 'off' && hit) || (c.type === 'want' && !hit)) out.push({ name: c.name, day: d, type: c.type }); }); }); return out; }
+// accepted requests the current schedule does not follow (stale build or a hand edit)
+function unmetRequests(k) { const st = S.M[k], out = [], mo = MONTHS[ym(k)[1] - 1]; if (!st || !st.A) return out;
+  const on = (n, d) => { const a = st.A[d - 1]; return !!a && [a.U, a.M, a.I].includes(n); };
+  cons(k).forEach(c => c.days.forEach(d => { let bad = false, what = '';
+    if (c.type === 'off' || c.type === 'block') { bad = on(c.name, d); what = `${c.name} off ${mo} ${d}`; }
+    else if (c.type === 'want') { bad = !on(c.name, d); what = `${c.name} wants call ${mo} ${d}`; }
+    else if (c.type === 'protected') { bad = d > 1 && on(c.name, d - 1); what = `${c.name} not post-call ${mo} ${d}`; }
+    if (bad) out.push({ name: c.name, day: d, type: c.type, pd: c.source === 'pd', what }); })); return out; }
 let IMPROVE = [];
 function modal(html, onWire) { const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`; document.body.appendChild(ov);
   const close = () => { ov.remove(); document.removeEventListener('keydown', k_); }; const k_ = e => { if (e.key === 'Escape') close(); };
@@ -519,7 +527,7 @@ function askRebuild(k) {
   if (!(isScheduler() && !['Published', 'PD review', 'Approved'].includes(S.M[k].status))) return;
   modal(`<h3 style="margin-top:0">Rebuild ${esc(monthName(k))} now?</h3><p class="small">The new rule only changes the schedule after a rebuild. Locked cells stay as they are.</p>
     <div class="row" style="gap:8px"><button class="btn primary" id="rbNow">Rebuild now</button><button class="btn" data-close>Later</button></div>`,
-    (ov, close) => { ov.querySelector('#rbNow').onclick = () => { close(); S.month = k; $('#monthSel').value = k; location.hash = 'schedule'; generate(true, k); }; });
+    (ov, close) => { ov.querySelector('#rbNow').onclick = () => { close(); generate(true, k, `${monthName(k)} rebuilt to include the change. All hard rules met.`); }; });
 }
 function showImprove(x) {
   const k = x.month || S.month, RB0 = rbFor(k), [y, m] = ym(k), nd = new Date(y, m, 0).getDate(), first = new Date(y, m - 1, 1).getDay(), hol = HOLNAMES[k] || {};
@@ -685,7 +693,9 @@ function pdNotes(st) { return st.log.filter(l => { const x = pdNoteText(l); retu
 function pdNoteText(l) { const m = l.text.match(/(Sent back|PD approved; sent to schedulers to publish|Approved and published):\s*(.*)$/); return m ? { kind: m[1] === 'Sent back' ? 'Sent back' : 'Approved', note: m[2] } : null; }
 function pdNotesPanel(st) { const L = pdNotes(st).map(l => Object.assign({ at: l.at }, pdNoteText(l))).filter(x => x.note); if (!L.length) return '';
   return `<div class="panel pdnotes"><h3>PD comments (${L.length})</h3><ul class="issues">${L.map((x, i) => `<li class="${x.kind === 'Sent back' ? 'soft' : 'ok'} small"><b>${x.kind}${i === 0 ? ' (latest)' : ''}:</b> “${esc(x.note)}” <span class="muted">· ${new Date(x.at).toLocaleString()}</span></li>`).join('')}</ul></div>`; }
-function pdBanner(st) { if (!(isScheduler() && st.status === 'Scheduler review')) return ''; const l = pdNotes(st).map(pdNoteText).find(x => x && x.kind === 'Sent back' && x.note); return l ? `<div class="banner pdbanner"><b>The PD sent this back:</b> “${esc(l.note)}” <a href="#approval">All PD comments</a></div>` : ''; }
+function pdBanner(st) { if (!(isScheduler() && st.status === 'Scheduler review')) return ''; const l = pdNotes(st).map(pdNoteText).find(x => x && x.kind === 'Sent back' && x.note); if (!l) return '';
+  const un = unmetRequests(S.month).filter(u => u.pd), hasPd = cons(S.month).some(c => c.source === 'pd');
+  return `<div class="banner pdbanner"><b>The PD sent this back:</b> “${esc(l.note)}” <a href="#approval">All PD comments</a>${un.length ? `<div style="margin-top:6px">Her requests are already accepted but not in the schedule yet: <b>${esc(un.map(u => u.what).join('; '))}</b>. <button class="btn primary" id="pdRebuild" style="margin-left:6px">Rebuild with the PD’s requests</button></div>` : hasPd ? '<div style="margin-top:6px">✓ The PD’s requests are in the schedule. Send it back to her when you’re ready.</div>' : ''}</div>`; }
 function viewApproval() {
   const st = cur(), steps = ['Draft', 'Scheduler review', 'PD review', 'Approved', 'Published'], idx = Math.max(0, steps.indexOf(st.status)), r = S.role, previewing = roleKey(S.role) !== S.realRole;
   let actions = '';
@@ -965,7 +975,7 @@ function rosterPanel() {
   const ed = isScheduler(), names = ROSTER_NAMES();
   return `<div class="panel" style="margin-top:14px"><h3>Call roster (${names.length})</h3><p class="small muted">Who's on this year's schedules. This is separate from accounts: the roster is who gets scheduled; accounts are who can sign in. Removing someone takes them off upcoming months that aren't published yet. Past months and history keep them.${ed ? '' : ' A scheduler or chief edits the roster.'}</p>
     <div class="tablewrap"><table style="max-width:560px"><thead><tr><th>Roster name</th><th>Level</th><th></th></tr></thead><tbody>
-    ${names.map(n => `<tr><td>${esc(n)}</td><td><select class="f" data-rpgy="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} level">${PGYS.map(([v, l]) => `<option value="${v}" ${String(DATA.pgy[n]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td>${ed ? `<button class="btn" data-rrm="${esc(n)}" style="padding:1px 8px">Remove</button>` : ''}</td></tr>`).join('')}
+    ${names.map(n => `<tr><td>${esc(n)}</td><td><select class="f" data-rpgy="${esc(n)}" ${ed ? '' : 'disabled'} aria-label="${esc(n)} level">${PGYS.map(([v, l]) => `<option value="${v}" ${String(DATA.pgy[n]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td style="white-space:nowrap">${ed ? `<button class="linkish small" data-rren="${esc(n)}" title="Fix a typo in this roster name everywhere">Rename</button> <button class="btn" data-rrm="${esc(n)}" style="padding:1px 8px">Remove</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>
     ${ed ? `<h3 style="margin-top:14px">Add to the roster</h3><div class="kv small" style="max-width:560px"><label for="rnName">Roster name</label><input id="rnName" type="text" placeholder="first name as it appears on the schedule">
       <label for="rnPgy">Level</label><select id="rnPgy" class="f">${PGYS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
@@ -983,6 +993,16 @@ function wirePeople() {
     if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Delete forever?'; el.style.fontWeight = '700'; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ''; el.textContent = 'Delete'; el.style.fontWeight = ''; } }, 5000); return; }
     const d = await peopleAction({ action: 'delete', id: el.dataset.pdel }, 'Account deleted.'); if (d) { PEOPLE = null; render(); } });
   document.querySelectorAll('[data-rpgy]').forEach(el => el.onchange = async () => { const n = el.dataset.rpgy; DATA.pgy[n] = el.value === 'F' ? 'F' : +el.value; await saveRoster(`${n} is now ${el.value === 'F' ? 'a fellow' : 'PGY-' + el.value}.`); logEvent(S.month, `Roster: ${n} level → ${el.value}`); render(); });
+  document.querySelectorAll('[data-rren]').forEach(el => el.onclick = () => { const old = el.dataset.rren;
+    modal(`<h3 style="margin-top:0">Rename ${esc(old)} on the roster</h3><label class="small" for="rrIn">New roster name</label><input id="rrIn" type="text" value="${esc(old)}" style="width:100%;margin:6px 0 10px">
+      <p class="small muted">For fixing a typo. The name changes everywhere at once: every month's schedule and inputs, history, requests, swaps and their linked account. It doesn't count as a schedule change, so nobody gets a "schedule changed" alert. The page reloads when it's done.</p>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rrGo">Rename</button></div>`, (ov, close) => {
+      const inp = ov.querySelector('#rrIn'); inp.focus(); inp.select();
+      const go = async () => { const v = inp.value.trim(); if (!v || v === old) return close(); if (ROSTER_NAMES().includes(v)) return toast(`${v} is already on the roster.`);
+        ov.querySelector('#rrGo').disabled = true; const { error } = await sb.rpc('rename_roster', { old_name: old, new_name: v });
+        if (error) { ov.querySelector('#rrGo').disabled = false; return toast('Not renamed: ' + error.message); }
+        close(); toast(`Renamed ${old} to ${v}. Reloading…`); setTimeout(() => location.reload(), 1200); };
+      ov.querySelector('#rrGo').onclick = go; inp.onkeydown = e => { if (e.key === 'Enter') go(); }; }); });
   document.querySelectorAll('[data-rrm]').forEach(el => el.onclick = async () => {
     const n = el.dataset.rrm; if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Remove ' + n + '?'; setTimeout(() => { if (el.isConnected) { el.dataset.armed = ''; el.textContent = 'Remove'; } }, 5000); return; }
     KEYS.forEach(k => { if (S.M[k] && S.M[k].status === 'Published') return; delete DATA.rotations[k][n]; if (S.M[k]) { delete S.M[k].inputs[n]; if (existing.has(k)) save(k); } });
@@ -1091,7 +1111,7 @@ function wire() {
   document.querySelectorAll('[data-hver]').forEach(b => b.onclick = () => { S.histVer = +b.dataset.hver; S.histVerKey = S.histMonth; render(); });
   document.querySelectorAll('[data-in]').forEach(i => i.onchange = () => { st.inputs[i.dataset.n][i.dataset.in] = i.value.trim(); logEvent(k, `Input: ${i.dataset.n} ${i.dataset.in} = ${i.value.trim() || '(none)'}`); save(); });
   document.querySelectorAll('[data-lv]').forEach(i => i.onchange = () => { const n = i.dataset.n, f = i.dataset.lv; S.people[n] = S.people[n] || {}; S.people[n][f] = i.type === 'checkbox' ? i.checked : i.value; if (f !== 'leaveConfirmed') S.people[n].leaveConfirmed = false; logEvent(k, `Leave: ${n} ${f} = ${i.type === 'checkbox' ? i.checked : i.value}`); save(); render(); });
-  on('#inputsApply', () => { location.hash = 'schedule'; generate(true); });
+  on('#inputsApply', () => generate(true, k, `${monthName(k)} rebuilt with these inputs. All hard rules met.`));
   on('#interpret', interpret);
   const notes = $('#notes'); if (notes) notes.oninput = () => { S.notes[k] = notes.value; saveNotes(k); };
   document.querySelectorAll('[data-qcal]').forEach(b => b.onclick = () => requestCal(S.requests.find(x => x.id === +b.dataset.qcal)));
@@ -1119,21 +1139,47 @@ function wire() {
   document.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => { const c = S.proposals.splice(+b.dataset.acc, 1)[0]; delete c.problem; await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason || '', status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'claude', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); askRebuild(k); logEvent(k, 'Accepted rule: ' + describe(c)); save(); render(); });
   document.querySelectorAll('[data-rej]').forEach(b => b.onclick = () => { S.proposals.splice(+b.dataset.rej, 1); render(); });
   document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { const c = cons(k).find(x => x.id === +b.dataset.rm); if (!c) return; if (c.source === 'resident') await setRequest(c.id, { status: 'denied', reason: 'Removed by a scheduler', decided_by: me.id, decided_at: new Date().toISOString() }); else await dropRequest(c.id); logEvent(k, 'Removed rule: ' + describe(c)); save(); render(); });
-  on('#applyNotes', () => { location.hash = 'schedule'; generate(true); });
+  on('#pdRebuild', () => generate(true, k, `${monthName(k)} rebuilt with the PD’s requests. All hard rules met.`));
+  on('#applyNotes', () => generate(true, k, `${monthName(k)} rebuilt with these requests. All hard rules met.`));
   on('#addManual', async () => { const c = { type: $('#mType').value, name: $('#mName').value, days: parseDays($('#mDays').value, ndays(k)), reason: $('#mWhy').value.trim() }; if (!c.days.length) return toast('Add at least one day, like 16 or 11-13.'); await addRequest({ month_key: k, resident: c.name, type: c.type, days: c.days, note: c.reason, status: 'accepted', source: S.role === 'Program Director' ? 'pd' : 'admin', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() }); logEvent(k, 'Added rule: ' + describe(c)); save(); render(); askRebuild(k); });
   document.querySelectorAll('[data-t]').forEach(i => i.onchange = () => { S.rules.targets[i.dataset.t][+i.dataset.i] = Math.max(0, +i.value || 0); save(); });
   const num = (id, kk) => { const el = $(id); if (el) el.onchange = () => { S.rules[kk] = +el.value; save(); }; };
   num('#rCap', 'fellowCap'); num('#rQ2', 'maxQ2Run'); num('#rHrs', 'callHours');
   const ss = $('#rSS'); if (ss) ss.onchange = () => { S.rules.sameServiceBlocked = ss.checked; save(); };
   document.querySelectorAll('[data-ntp]').forEach(i => i.onchange = () => { const n = i.dataset.ntp; S.rules.noTwoPerson = (S.rules.noTwoPerson || []).filter(x => x !== n); if (i.checked) S.rules.noTwoPerson.push(n); logEvent(k, `${n} ${i.checked ? 'not eligible' : 'eligible again'} for two-person call`); save(); });
-  on('#rulesApply', () => { logEvent(k, 'Changed rule settings'); location.hash = 'schedule'; generate(true); });
+  on('#rulesApply', () => { logEvent(k, 'Changed rule settings'); generate(true, k, `${monthName(k)} rebuilt with these rules. All hard rules met.`); });
   on('#saveVer', () => { saveVersion(st.status); logEvent(k, 'Saved a version'); save(); render(); toast('Version saved.'); });
-  on('#toPD', () => { const ev = CUR.ev; const hard = ev.issues.filter(i => i.sev === 'hard').length; const est = Object.keys(CUR.est).length; if (hard) return toast(`Fix the ${hard} hard-rule break(s) first.`); if (est && !confirmInline()) return; st.status = 'PD review'; saveVersion('Sent to PD'); logEvent(k, 'Sent to the PD for approval' + (est ? ` with ${est} call(s) on unconfirmed dates` : '')); save(); render(); });
+  on('#toPD', () => { const ev = CUR.ev; const hard = ev.issues.filter(i => i.sev === 'hard').length; const est = Object.keys(CUR.est).length; if (hard) return toast(`Fix the ${hard} hard-rule break(s) first.`);
+    const send = () => { if (est && !confirmInline()) return; st.status = 'PD review'; saveVersion('Sent to PD'); logEvent(k, 'Sent to the PD for approval' + (est ? ` with ${est} call(s) on unconfirmed dates` : '')); save(); render(); };
+    const pend = S.requests.filter(r => r.month_key === k && r.status === 'pending'), un = unmetRequests(k), unPd = un.filter(u => u.pd);
+    if (!pend.length && !un.length) return send();
+    modal(`<h3 style="margin-top:0">Before you send ${esc(monthName(k))} to the PD</h3>
+      ${pend.length ? `<p class="small"><b>${pend.length} request${pend.length > 1 ? 's are' : ' is'} still waiting for a decision</b> (${esc(pend.map(r => r.resident).join(', '))}). <a href="#notes" data-close>Decide them</a></p>` : ''}
+      ${un.length ? `<p class="small"><b>${un.length} accepted request${un.length > 1 ? 's aren’t' : ' isn’t'} in the schedule:</b></p><ul class="issues">${un.map(u => `<li class="${u.pd ? 'hard' : 'soft'} small">${esc(u.what)}${u.pd ? ' <span class="pill">PD</span>' : ''}</li>`).join('')}</ul>` : ''}
+      ${unPd.length ? '<p class="small">PD requests are always honored, so rebuild before sending.</p>' : un.length ? '<p class="small muted">Resident requests are best effort. Rebuilding may fit them in; if it can’t, you can still send.</p>' : ''}
+      <div class="row" style="justify-content:flex-end;gap:8px;flex-wrap:wrap"><button class="btn" data-close>Cancel</button>${un.length ? '<button class="btn primary" id="tpRebuild">Rebuild first</button>' : ''}${unPd.length ? '' : '<button class="btn" id="tpSend">Send anyway</button>'}</div>`, (ov, close) => {
+      const rb = ov.querySelector('#tpRebuild'); if (rb) rb.onclick = () => { close(); generate(true, k, `${monthName(k)} rebuilt. Check it, then send it to the PD.`); };
+      const sd = ov.querySelector('#tpSend'); if (sd) sd.onclick = () => { close(); send(); }; }); });
   on('#approveHold', () => { st.status = 'Approved'; saveVersion('Approved'); logEvent(k, 'PD approved; sent to schedulers to publish' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
   on('#publish', () => { st.status = 'Published'; saveVersion('Published'); logEvent(k, 'Published'); save(); render(); toast('Published. Residents see it now.'); });
   on('#unapprove', () => { st.status = 'Scheduler review'; logEvent(k, 'Reopened after PD approval (needs PD review again)'); save(); render(); });
   on('#approve', () => { st.status = 'Published'; saveVersion('Approved'); logEvent(k, 'Approved and published' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
-  on('#sendBack', () => { st.status = 'Scheduler review'; logEvent(k, 'Sent back' + ($('#pdNote').value ? ': ' + $('#pdNote').value : '')); save(); render(); });
+  on('#sendBack', () => { const names = Object.keys(st.inputs || {}), nd = ndays(k), mo = MONTHS[ym(k)[1] - 1];
+    const row = () => `<div class="row sbrow" style="gap:6px;flex-wrap:wrap;margin-top:6px"><select class="f sbName" aria-label="Resident">${names.map(n => `<option>${esc(n)}</option>`).join('')}</select><select class="f sbType" aria-label="Request"><option value="off">off (no call)</option><option value="want">on call</option><option value="protected">not post-call</option></select><input type="text" class="sbDays" placeholder="${mo} days, e.g. 14 or 11-13" style="width:170px" aria-label="Days"></div>`;
+    modal(`<h3 style="margin-top:0">Send ${esc(monthName(k))} back</h3>
+      <label class="small" for="sbNote">Comment for the schedulers</label><textarea id="sbNote" rows="3" style="width:100%;margin:4px 0 10px" placeholder="What should change?">${esc($('#pdNote') ? $('#pdNote').value : '')}</textarea>
+      <div class="small"><b>Specific requests (optional).</b> These are accepted automatically and always honored, so the schedulers only have to rebuild.</div>
+      <div id="sbRows">${row()}</div><button class="linkish small" id="sbMore" style="margin-top:6px">+ another request</button>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sbGo">Send back</button></div>`, (ov, close) => {
+      ov.querySelector('#sbMore').onclick = () => ov.querySelector('#sbRows').insertAdjacentHTML('beforeend', row());
+      ov.querySelector('#sbGo').onclick = async () => { const note = ov.querySelector('#sbNote').value.trim();
+        const reqs = [...ov.querySelectorAll('.sbrow')].map(r => ({ name: r.querySelector('.sbName').value, type: r.querySelector('.sbType').value, days: parseDays(r.querySelector('.sbDays').value, nd) })).filter(r => r.days.length);
+        if (!note && !reqs.length) return toast('Add a comment or a request so the schedulers know what to change.');
+        close(); const lab = { off: 'off', want: 'on call', protected: 'not post-call' };
+        for (const r of reqs) await addRequest({ month_key: k, resident: r.name, type: r.type, days: r.days, note: 'PD, with send-back', status: 'accepted', source: 'pd', created_by: me.id, decided_by: me.id, decided_at: new Date().toISOString() });
+        const rtxt = reqs.map(r => `${r.name} ${lab[r.type]} ${r.days.map(d => mo + ' ' + d).join(', ')}`).join('; ');
+        st.status = 'Scheduler review'; logEvent(k, 'Sent back: ' + [note, rtxt ? `Requests (already accepted): ${rtxt}` : ''].filter(Boolean).join(' · ')); save(); render();
+        toast(reqs.length ? `Sent back. ${reqs.length} request${reqs.length > 1 ? 's' : ''} accepted automatically.` : 'Sent back to the schedulers.'); }; }); });
   on('#revise', () => { st.status = 'Scheduler review'; logEvent(k, 'Started a revised version'); save(); render(); });
   on('#copyTxt', async () => { try { await navigator.clipboard.writeText(scheduleText()); toast('Copied. Paste it into a text or email.'); } catch (e) { toast('Copy was blocked here.'); } });
   document.querySelectorAll('[data-restore]').forEach(b => b.onclick = () => { const v = st.versions.find(v => v.n === +b.dataset.restore); if (v) { st.A = v.A.map(([U, M, I]) => ({ U, M, I })); logEvent(k, 'Restored v' + v.n); save(); render(); } });
