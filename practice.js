@@ -79,7 +79,13 @@
     others.push({ id: 'ppd', display_name: 'Program Director (practice)', roster_name: null, username: 'pd', active: true, role: 'pd', is_admin: true });
     const T = { profiles: [me].concat(others), reference: Object.entries(ref).map(([key, value]) => ({ key, value })), settings: [{ id: 1, rules: {}, trio_swap: { xmas: false, ny: false }, people: {} }],
       months: [], versions: [], activity_log: [], requests: [], swaps: [], month_notes: [], published: [], published_history: [], seen_versions: [], attendings: [] };
-    const A = pre.A, low = roster.filter(n => [1, 2, 3].includes(pgy[n]));
+    let A = pre.A; const low = roster.filter(n => [1, 2, 3].includes(pgy[n]));
+    try { // safety net: if the stored draft ever falls behind the rules, practice builds a clean one instead of showing rule breaks
+      const E = window.CallEngine, inp = window.BuildInput.buildInput(D, 2026, 12, 'draft'), x = pre.trios.Christmas, n = pre.trios.NewYear;
+      [[23, x[0]], [25, x[0]], [27, x[0]], [24, x[1]], [26, x[1]], [30, n[0]], [31, n[1]]].forEach(([d, t]) => inp.locks.push({ day: d, slot: 'U', name: t[2] }, { day: d, slot: 'M', name: t[1] }, { day: d, slot: 'I', name: t[0] }));
+      const hard = E.evaluate(E.prepare(inp), A.map(([U, M, I]) => ({ U, M, I }))).issues.filter(i => i.sev === 'hard').length;
+      if (hard) { const r = E.solve(inp, { seed: 4242, iters: 30000 }); A = r.A.map(a => [a.U || null, a.M || null, a.I || null]); pre.A = A; }
+    } catch (e) {}
     const pick = (arr, i) => arr[i % arr.length];
     if (role === 'resident') { // December is out; residents see the published copy
       T.months.push({ key: '2026-12', status: 'Published', data: { A: clone(A) }, updated_at: now() });

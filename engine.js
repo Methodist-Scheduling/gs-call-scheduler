@@ -11,7 +11,7 @@
     pgy4MidSlot: false, // NOT in v1.1: let a PGY-4 fill the mid slot (happened 19 times Jul–Nov) — ask chiefs
     sameServiceBlocked: false, // NOT a stated rule: optional extension of H15 to two residents on the same service — ask chiefs
     q3WindowMax: 9, // ACGME: no more than every 3rd night avg over 28 days
-    weights: { target: 60, q2: 30, gap3: 4, noWeekendOff: 220, oneWeekendOff: 45, backToBack: 120, bookend: 70, gs2: 40, protected: 90, request: 80,
+    weights: { target: 60, q2: 30, gap3: 4, noWeekendOff: 220, oneWeekendOff: 45, backToBack: 120, bookend: 3000, /* S4 ranks above every other soft rule: broken only when keeping it would break a hard rule */ gs2: 40, protected: 90, request: 80,
       wkndFair: 6, holFair: 6, twoPerson: 45, twoFair: 10, typeMix: 2, spread: 1 }
   };
   const dow = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 Sun..6 Sat
@@ -255,7 +255,10 @@
     const build = (callDays, refDay, prev, fellowWeek, refHoliday, tUp, wk) => {
       const b = {}; Object.keys(BLOCK).forEach(k => b[k] = []);
       const placed = n => Object.values(b).some(v => v.some(m => m.replace(' (cross-cover)', '') === n));
-      const avail = p => !p.vacAll.has(refDay) && !(p.leaveDays || []).includes(refDay) && p.rotation !== 'Leave';
+      // S4: nobody is pulled in to round during their vacation or on the weekends on either side of it
+      const flank = p => { const vd = [...p.vacAll].filter(d => { const w = P.days[d - 1] && P.days[d - 1].w; return w >= 1 && w <= 5; }).sort((x, y) => x - y); if (!vd.length) return false;
+        const f = vd[0], l = vd[vd.length - 1], off = new Set([f - 3, f - 2, f - 1, l + 1, l + 2, l + 3]); return callDays.some(d => off.has(d) || p.vacAll.has(d)); };
+      const avail = p => !p.vacAll.has(refDay) && !(p.leaveDays || []).includes(refDay) && p.rotation !== 'Leave' && !flank(p);
       // the SICU fellow never cross-covers; she rounds only ICU, only on her weekends
       const all = [...new Set(callDays.map(d => A[d - 1]).filter(Boolean).flatMap(a => [a.I, a.M, a.U]).filter(Boolean))];
       const callers = all.filter(n => !P.byName[n] || P.byName[n].lvl !== 'F');
@@ -327,6 +330,13 @@
       // still empty and no caller to cross-cover: pull someone in even if they worked last weekend
       Object.keys(BLOCK).forEach(k => { if (!b[k].length) { const f = pick(BLOCK[k]); if (f) { b[k].push(f.name); fills[f.name] = (fills[f.name] || 0) + 1; } } });
       twoT(true);
+      // a whole service away (vacation, bookend weekends): someone already rounding moves over to cross-cover it,
+      // taken from the fullest team (a cross-coverer first; never the fellow; T/EGS keeps its two)
+      Object.keys(BLOCK).forEach(k => { if (b[k].length) return;
+        const spare = Object.keys(b).filter(x => x !== k && b[x].length > (x === 'Trauma/EGS' ? 2 : 1)).flatMap(x => b[x].map(n => ({ x, n })))
+          .filter(o => { const q = P.byName[base(o.n)]; return q && q.lvl !== 'F' && !(tUp && base(o.n) === tUp.name); })
+          .sort((o1, o2) => (b[o2.x].length - b[o1.x].length) || (/cross-cover/.test(o2.n) - /cross-cover/.test(o1.n)) || (P.byName[base(o1.n)].pgy - P.byName[base(o2.n)].pgy))[0];
+        if (spare) { b[spare.x].splice(b[spare.x].indexOf(spare.n), 1); b[k].push(label(k, base(spare.n))); } });
       const workers = new Set(all.concat(...Object.values(b).map(v => v.map(n => n.replace(' (cross-cover)', '')))));
       return { blocks: b, callers, workers };
     };

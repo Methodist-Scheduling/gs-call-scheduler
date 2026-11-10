@@ -73,6 +73,8 @@ function checkCalls(k, A, drafts, tag) {
   check(`${tag} every day staffed correctly (levels, no doubles, no back-to-back days, nobody on vacation)`, bad.length === 0, bad.slice(0, 6).join(' | '));
   const lk = holidayLocks(k).filter(([d, t]) => !(A[d - 1].I === t[0] && A[d - 1].M === t[1] && A[d - 1].U === t[2]));
   check(`${tag} holiday trios are exactly where the holiday list puts them`, lk.length === 0, lk.map(([d]) => `${mn} ${d}`).join(', '));
+  const bk = P.people.filter(p => ev.stats[p.name] && ev.stats[p.name].bookBroken).map(p => p.name);
+  check(`${tag} vacation bookend weekends are off (S4)`, bk.length === 0, bk.join(', '));
   return { P, ev };
 }
 
@@ -100,7 +102,7 @@ function checkRounding(k, A, drafts, tag) {
     if (p.rotation === 'Leave' || p.out.has(d)) away.push(`${mn} ${d}: ${base(n)}`);
     else if (p.vacAll.has(d)) vacWk.push(`${mn} ${d}: ${base(n)}${[A[d - 1].U, A[d - 1].M, A[d - 1].I].includes(base(n)) ? ' (on call that day)' : r.callers.includes(base(n)) ? ' (on call that weekend)' : ' (pulled in)'}`); })));
   check(`${tag} nobody rounds on a vacation weekday or while on leave`, away.length === 0, [...new Set(away)].slice(0, 6).join(' | '));
-  warn(`${tag} rounding on the weekend at the end of a vacation week (allowed today; is it what you want?)`, vacWk);
+  check(`${tag} nobody rounds on a weekend inside their vacation week (S4)`, vacWk.length === 0, [...new Set(vacWk)].slice(0, 6).join(' | '));
   // HD5: one team per holiday, made only of that holiday's callers
   const hrecs = recs.filter(r => r.holiday), out = [];
   hrecs.forEach(r => { const ds = daysOf(r), pool = new Set(ds.flatMap(d => [A[d - 1].U, A[d - 1].M, A[d - 1].I]).filter(Boolean));
